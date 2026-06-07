@@ -2,36 +2,28 @@
 
 The manuscript and response letter point to:
 
-https://github.com/sayberrygames/edgellm-router
+https://github.com/Sangdon-Park/edgellm-router
 
-That URL currently returns 404 until the GitHub repository is created and this local repository is pushed.
+This local repository has been pushed to the public GitHub repository above.
 
-## Option A: GitHub Web UI
-
-1. Open https://github.com/organizations/sayberrygames/repositories/new
-2. Repository name: `edgellm-router`
-3. Visibility: `Public`
-4. Do not initialize with README, `.gitignore`, or license, because this local repo already contains them.
-5. Create repository.
-6. In this folder, run:
+## Current Remote
 
 ```bash
-git push -u origin main
+git remote -v
+git push
 ```
 
-## Option B: GitHub Desktop
+## If Moving to the Sayberry Games Organization Later
 
-1. Open GitHub Desktop.
-2. Add existing repository:
-   `C:\Users\User\codex-experiments\edgellm-router-release`
-3. Publish repository.
-4. Owner: `sayberrygames`
-5. Name: `edgellm-router`
-6. Visibility: Public.
+The original organization URL could not be created from the current authenticated account because GitHub reported insufficient organization permissions. If an organization owner creates or grants access to `sayberrygames/edgellm-router`, the repository can be moved or mirrored later:
+
+```bash
+git remote set-url origin https://github.com/sayberrygames/edgellm-router.git
+git push -u origin main
+```
 
 ## Backup Artifact
 
 A supplementary ZIP is available at:
 
 `C:\Users\User\codex-experiments\edgellm-router-release.zip`
-

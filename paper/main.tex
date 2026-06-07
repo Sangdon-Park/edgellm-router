@@ -88,7 +88,7 @@ This paper formulates request routing as an online learning problem and proposes
 \rev{The paper makes four contributions:
 (1) a lightweight query complexity predictor (a $1{,}187$-parameter MLP) that reaches $80\%$ three-way accuracy and degrades gracefully under feature perturbation;
 (2) a multi-armed bandit formulation with a latency-aware reward and a tail-sensitive Deadline-Aware Thompson Sampling (DATS) algorithm whose arm score incorporates a conservative upper-tail latency estimate and a recency-weighted deadline-miss signal;
-(3) an open-source edge computing simulator with queueing, batching, cold-start, and heavy-tail network effects, released with configuration files and the MLP weights;\footnote{\url{https://github.com/sayberrygames/edgellm-router}} and
+(3) an open-source edge computing simulator with queueing, batching, cold-start, and heavy-tail network effects, released with configuration files and the MLP weights;\footnote{\url{https://github.com/Sangdon-Park/edgellm-router}} and
 (4) comprehensive experiments across three application domains (narrative, customer-QA, code) that include cascade and QoS-driven baselines.}
 
 \rev{On an interactive narrative workload, \system{} reaches $99.2\%$ of cloud-only quality while reducing $p_{99}$ latency by $64\%$ and SLA violations by $99\%$ compared to the cloud-only baseline, with $87\%$ cost savings.
@@ -142,7 +142,7 @@ This paper makes the following contributions:
 
   \item \textbf{Edge computing simulator.}
         An open-source simulator is released that models heterogeneous edge-cloud topologies, realistic network traces, and LLM inference characteristics.
-        \rev{The revised simulator now models queueing delay (M/G/1-style utilisation), continuous batching on the cloud tier, probabilistic cold-start penalties, explicit time-to-first-token and per-token decoding, and a Pareto-mixed heavy-tail for cloud variability. Configuration files, MLP weights, and experiment scripts are released at \url{https://github.com/sayberrygames/edgellm-router}.}
+        \rev{The revised simulator now models queueing delay (M/G/1-style utilisation), continuous batching on the cloud tier, probabilistic cold-start penalties, explicit time-to-first-token and per-token decoding, and a Pareto-mixed heavy-tail for cloud variability. Configuration files, MLP weights, and experiment scripts are released at \url{https://github.com/Sangdon-Park/edgellm-router}.}
 
   \item \textbf{Comprehensive empirical evaluation.}
         On traces from an interactive narrative application, \system{} achieves \rev{$99.2\%$} of cloud-only quality while reducing SLA violations by \rev{$99\%$} and API costs by $87\%$.
@@ -389,7 +389,7 @@ The bound matches the $\widetilde{O}(\sqrt{K\log T/T})$ order of the standard TS
 \section{Edge Computing Simulator}
 \label{sec:simulator}
 
-We developed an open-source discrete-event simulator\footnote{Source, config files, MLP weights, and experiment scripts: \url{https://github.com/sayberrygames/edgellm-router}; \texttt{run\_experiments.sh} reproduces every table/figure.} that models a three-tier hierarchy (client, edge, cloud) with realistic latency, quality, and queueing behaviour.
+We developed an open-source discrete-event simulator\footnote{Source, config files, MLP weights, and experiment scripts: \url{https://github.com/Sangdon-Park/edgellm-router}; \texttt{run\_experiments.sh} reproduces every table/figure.} that models a three-tier hierarchy (client, edge, cloud) with realistic latency, quality, and queueing behaviour.
 
 \paragraph{Network model}
 Latency is a log-normal body plus a Pareto heavy-tail mixture:
