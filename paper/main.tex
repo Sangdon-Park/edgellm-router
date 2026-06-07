@@ -62,7 +62,7 @@
 
 \title{Latency-Constrained Request Routing for Interactive LLM Applications: \\ A Multi-Armed Bandit Approach}
 
-\author[inst1]{Minsu Jeon}
+\author[inst1]{Min-su Jeon}
 \ead{jms535@sayberrygames.com}
 \author[inst1]{Minkyung Kim}
 \ead{mkkim1778@gmail.com}
@@ -92,7 +92,7 @@ This paper formulates request routing as an online learning problem and proposes
 (4) comprehensive experiments across three application domains (narrative, customer-QA, code) that include cascade and QoS-driven baselines.}
 
 \rev{On an interactive narrative workload, \system{} reaches $99.2\%$ of cloud-only quality while reducing $p_{99}$ latency by $64\%$ and SLA violations by $99\%$ compared to the cloud-only baseline, with $87\%$ cost savings.
-A paired bootstrap test over $5$ seeds shows DATS significantly reduces SLA violations compared with plain Thompson Sampling under non-stationary network conditions ($95\%$ CI excludes zero).
+A paired bootstrap test over the $5$-seed main workload shows DATS significantly reduces SLA violations compared with plain Thompson Sampling ($95\%$ CI excludes zero), and a separate network-shift experiment shows the same ordering under non-stationary conditions.
 Analysis across nine experimental dimensions---including latency-model sensitivity, multi-domain generalisation, predictor ablation, and statistical robustness---validates the effectiveness of adaptive routing.}
 \end{abstract}
 
@@ -134,7 +134,7 @@ This paper makes the following contributions:
 
   \item \textbf{Query complexity predictor.}
         A lightweight classifier ($<1$~ms inference) estimates query complexity from token count, entity density, question type, and context length.
-        \rev{The predictor is a two-layer MLP (hidden size $16$, $1{,}187$ parameters) trained by softmax cross-entropy on a $6{,}000$-example synthetic dataset spanning three application domains with $5\%$ label-noise to emulate human disagreement; it reaches $80\%$ three-way accuracy on a $1{,}500$-sample held-out set and degrades by at most $14$\,pp under $\sigma{=}0.2$ Gaussian feature perturbation (Section~\ref{sec:method:predictor}).}
+        \rev{The predictor is a two-layer MLP (hidden size $16$, $1{,}187$ parameters) trained by softmax cross-entropy on a $6{,}000$-example synthetic dataset spanning three application domains with $5\%$ label-noise to emulate human disagreement; it reaches $80\%$ three-way accuracy on a $1{,}500$-sample held-out set and degrades by $18$\,pp under $\sigma{=}0.2$ Gaussian feature perturbation (Section~\ref{sec:method:predictor}).}
 
   \item \textbf{MAB routing algorithms.}
         This paper implements and compares UCB1, Thompson Sampling, and $\epsilon$-greedy variants adapted for latency-aware settings.
@@ -155,6 +155,7 @@ Section~\ref{sec:problem} formalizes the routing problem.
 Section~\ref{sec:method} presents the proposed algorithms.
 Section~\ref{sec:simulator} describes the edge computing simulator.
 Section~\ref{sec:experiments} reports experimental results.
+Section~\ref{sec:discussion} discusses implications and limitations.
 Section~\ref{sec:conclusion} concludes.
 
 \section{Related Work}
@@ -169,7 +170,9 @@ Quantization (GPTQ~\citep{frantar2022gptq}, AWQ~\citep{lin2024awq}) and distilla
 Clipper~\citep{crankshaw2017clipper}, InferLine~\citep{crankshaw2020inferline}, and SHEPHERD~\citep{zhang2023shepherd} route requests across heterogeneous backends using batching and learned cost models. LLM-specific systems include Orca's continuous batching~\citep{yu2022orca}, vLLM's PagedAttention~\citep{kwon2023vllm}, and FlexGen~\citep{sheng2023flexgen}. These optimise \emph{single-model} serving and are complementary to the \emph{multi-tier routing} problem addressed here. Cascade approaches (FrugalGPT~\citep{chen2023frugalgpt}, RouteLLM~\citep{ong2024routellm}, mixture-of-thought~\citep{yue2023large}, AutoMix~\citep{aggarwal2024automix}) route via fixed confidence thresholds or supervised classifiers; we formulate routing as online learning that adapts without ground-truth labels, and include FrugalGPT as a baseline (Section~\ref{sec:experiments}).
 
 \paragraph{Multi-armed bandits and constrained routing}
-UCB1~\citep{auer2002finite} and Thompson Sampling~\citep{thompson1933likelihood,russo2018tutorial} achieve $O(\sqrt{KT\log T})$ regret for stochastic bandits; contextual variants~\citep{li2010contextual,riquelme2018deep} use side features. Constraint-aware formulations include conservative bandits~\citep{wu2016conservative} and knapsack bandits~\citep{badanidiyuru2018bandits}; we adopt a practical penalty-based approach instead. Bandit-based routing in wireless networks---combinatorial bandits~\citep{zhao2011mabrouting}, MAGELLAN~\citep{scarvaglieri2024magellan}, 802.11be MAB~\citep{lian2025multilink}---shares our motivation that online adaptation beats static policies under unpredictable conditions, but differs in reward structure (quality scores vs throughput) and exploration unit (execution tier vs wireless channel). To our knowledge this is the first application of MAB to edge-cloud LLM routing with an explicit deadline-satisfaction term.
+UCB1~\citep{auer2002finite} and Thompson Sampling~\citep{thompson1933likelihood,russo2018tutorial} achieve $O(\sqrt{KT\log T})$ regret for stochastic bandits; contextual variants~\citep{li2010contextual,riquelme2018deep} use side features. Constraint-aware formulations include conservative bandits~\citep{wu2016conservative} and knapsack bandits~\citep{badanidiyuru2018bandits}; we adopt a practical penalty-based approach instead.
+\rev{A closely related body of work uses MAB formulations to optimise routing and resource allocation in wireless and multi-hop networks, where the feedback structure---selecting one of several channels or paths whose quality is observed only after use---mirrors the edge-cloud LLM setting. Zhao et al.~\citep{zhao2011mabrouting} introduced combinatorial bandits with dependent arms for opportunistic network routing, and Tekin and van der Schaar~\citep{tekin2015distributed} extended contextual bandits to cooperative distributed settings. More recently, MAGELLAN~\citep{scarvaglieri2024magellan} proposes a distributed MAB algorithm for energy-fair, reliable routing in multi-hop LoRa networks, and Lian et al.~\citep{lian2025multilink} combine MAB with LLM-assisted channel selection for IEEE 802.11be multi-link operation. These works share our motivation that online adaptation beats static policies under unpredictable conditions, but differ in reward structure (quality scores rather than link throughput), exploration unit (execution tier rather than wireless channel), and the explicit deadline-satisfaction term in the arm score.}
+To our knowledge this is the first application of MAB to edge-cloud LLM routing with an explicit deadline-satisfaction term.
 
 \paragraph{Speculative execution}
 Speculative decoding~\citep{leviathan2023speculative,chen2023accelerating,cai2024medusa,li2024eagle} accelerates a single model via token-level draft-and-verify; our hybrid tier applies the same idea at response level---an edge draft that the cloud may refine if budget permits.
@@ -191,6 +194,7 @@ Table~\ref{tab:related-comparison} summarizes the positioning of this work.
     FrugalGPT~\citep{chen2023frugalgpt}          & \checkmark & \texttimes & \texttimes & \texttimes \\
     RouteLLM~\citep{ong2024routellm}             & \checkmark & \texttimes & \texttimes & \texttimes \\
     SHEPHERD~\citep{zhang2023shepherd}           & \checkmark & \texttimes & \checkmark & \texttimes \\
+    \rev{Tekin et al.~\citep{tekin2015distributed}} & \rev{\texttimes} & \rev{\checkmark} & \rev{\texttimes} & \rev{\texttimes} \\
     \rev{MAGELLAN~\citep{scarvaglieri2024magellan}} & \rev{\texttimes} & \rev{\checkmark} & \rev{\checkmark} & \rev{\texttimes} \\
     \rev{Lian et al.~\citep{lian2025multilink}}  & \rev{\texttimes} & \rev{\checkmark} & \rev{\checkmark} & \rev{\texttimes} \\
     \rev{AutoMix~\citep{aggarwal2024automix}}    & \rev{\checkmark} & \rev{\texttimes} & \rev{\texttimes} & \rev{\texttimes} \\
@@ -310,7 +314,7 @@ This paper proposes \emph{Deadline-Aware Thompson Sampling} (DATS), which combin
 
 For each arm $k$, the algorithm maintains:
 \begin{itemize}
-  \item Quality posterior: $q_k \sim \text{Beta}(\alpha_k, \beta_k)$
+  \item Quality posterior: $q_k \sim \text{Beta}(\alpha_k, \beta_k)$, accumulated over the full history of quality observations for that arm.
   \item \rev{Latency estimate: $\hat{\ell}_k, \hat{\sigma}_k$, updated via a recency-weighted exponential moving average with coefficient $\gamma{=}0.55$. The effective memory is $\approx 1/(1-\gamma)\!\approx\!2.2$ requests for the latest signal, giving fast reaction to regime changes.}
   \item \rev{Recent deadline-miss indicator $m_k$, tracked via a second EMA with coefficient $0.65$.}
 \end{itemize}
@@ -371,17 +375,17 @@ The hybrid tier (arm $k{=}3$) runs an edge-drafting pass and, if the remaining b
 
 DATS inherits Thompson Sampling's exploration-exploitation balance: the Beta posterior is updated only from quality observations of the chosen arm (Line~14), and the selection rule in Line~10 is monotone-increasing in the posterior sample $\tilde{q}_k$. Because the reweighting factors $p_k, m_k, \pi$ are bounded, the rule is an affine reweighting of a Thompson sampler and inherits the standard $O(\sqrt{KT\log T})$ quality-regret bound up to a constant~\citep{agrawal2012analysis,russo2018tutorial,lattimore2020bandit}. Crucially, the additional $-\lambda_t(1-p_k)$ and $-w_m m_k$ terms do not collapse exploration because during warm-up $\hat{\sigma}_k$ keeps $p_k$ bounded away from $1$ for untried arms; the sensitivity analysis in Figure~\ref{fig:lambda-sweep} confirms smooth behaviour across $\lambda\in[0,1]$.
 
-Beyond quality regret, DATS's \emph{SLA-violation} rate admits an asymptotic bound. Let $V_T{=}T^{-1}\sum_{t}\mathbf{1}[\ell_{k_t}{>}L_{\max}]$ be the empirical violation rate and $v_k^\star{=}\Pr[\ell_k{>}L_{\max}]$, $v^\star{=}\min_k v_k^\star$, $v_\Delta{=}\min_{k:v_k^\star{>}v^\star}(v_k^\star{-}v^\star)$.
+Beyond quality regret, a stationary calibration variant of DATS admits an \emph{SLA-violation} bound. The result uses cumulative per-arm deadline estimates for analysis; the implemented fixed-coefficient EMAs in Algorithm~\ref{alg:dats} are finite-memory surrogates chosen for non-stationary adaptation and are evaluated empirically in Sections~\ref{sec:experiments:nonstationary}--\ref{sec:experiments:sensitivity}. Let $V_T{=}T^{-1}\sum_{t}\mathbf{1}[\ell_{k_t}{>}L_{\max}]$ be the empirical violation rate and $v_k^\star{=}\Pr[\ell_k{>}L_{\max}]$, $v^\star{=}\min_k v_k^\star$, $v_\Delta{=}\min_{k:v_k^\star{>}v^\star}(v_k^\star{-}v^\star)$.
 
-\begin{proposition}[DATS long-run SLA bound]
+\begin{proposition}[Stationary DATS SLA bound]
 \label{prop:dats-sla}
-Assume (A1) per-arm latencies are i.i.d.\ sub-Gaussian with variance proxy $\sigma_k^2$; (A2) quality rewards are bounded i.i.d.; (A3) the penalty satisfies $\lambda\geq\lambda_0$ for $\lambda_0$ depending only on the bounded reward range and $v_\Delta$. Then DATS satisfies
+Assume (A1) per-arm latencies are i.i.d.\ sub-Gaussian with variance proxy $\sigma_k^2$; (A2) quality rewards are bounded i.i.d.; (A3) the penalty satisfies $\lambda\geq\lambda_0$ for $\lambda_0$ depending only on the bounded reward range and $v_\Delta$; and (A4) the deadline probability term is estimated from the cumulative per-arm latency sample or is otherwise consistently calibrated. Then the stationary DATS score satisfies
 $\mathbb{E}[V_T] \leq v^\star + C\sqrt{K\log T / T}$,
 where $C$ depends only on $K$, $\sigma_k$, $v_\Delta$, and the bounded score-reweighting range.
 \end{proposition}
 
 \begin{proof}[Proof sketch]
-Hoeffding concentration on the EMA latency statistics gives $|\hat{p}_k - (1{-}v_k^\star)|{\leq}O(\sqrt{\log T / n_k})$ with probability $\geq 1-1/T^2$. Under (A3), the $-\lambda_t(1-p_k)$ term dominates the score for any arm with $v_k^\star{>}v^\star{+}v_\Delta$, so a standard UCB-style pull-count argument~\citep{auer2002finite} gives $\mathbb{E}[n_k(T)]\leq O(K\log T/v_\Delta^2)$ for suboptimal arms. Summing $v_k^\star\,\mathbb{E}[n_k(T)]/T$ over arms and using (A1--A2) to control the sub-optimal contribution yields the stated bound. The complete four-step proof (concentration, score-gap, pull-count, summation) is in the open-source repository (\texttt{proof\_appendix.pdf}).
+Hoeffding concentration on the cumulative per-arm deadline estimates gives $|\hat{p}_k - (1{-}v_k^\star)|{\leq}O(\sqrt{\log T / n_k})$ with probability $\geq 1-1/T^2$. Under (A3), the $-\lambda_t(1-p_k)$ term dominates the score for any arm with $v_k^\star{>}v^\star{+}v_\Delta$, so a standard UCB-style pull-count argument~\citep{auer2002finite} gives $\mathbb{E}[n_k(T)]\leq O(K\log T/v_\Delta^2)$ for suboptimal arms. Summing $v_k^\star\,\mathbb{E}[n_k(T)]/T$ over arms and using (A1--A2) to control the sub-optimal contribution yields the stated bound. This argument is intentionally a stationary sanity check for the score design; the fixed-$\gamma$ EMAs do not claim vanishing estimation variance, but trade asymptotic concentration for the fast response to regime changes measured in Section~\ref{sec:experiments:nonstationary}.
 \end{proof}
 
 The bound matches the $\widetilde{O}(\sqrt{K\log T/T})$ order of the standard TS regret bound but applies to the \emph{constraint} (SLA violations)---the primary metric for deadline-aware routing. The complexity-prior $\pi(\hat{c},k)$ is bounded by $0.10$ and affects only early convergence, not the asymptotic rate; empirically it shortens convergence by $30$--$50$ requests (Figure~\ref{fig:adaptation}). Table~\ref{tab:predictor-ablation} confirms predictor miscalibration moves SLA by $<0.15$\,pp, so the predictor is not a single point of failure.
@@ -474,6 +478,7 @@ Table~\ref{tab:main-results} summarizes performance across policies.
   \item \rev{$87\%$ cost savings ($\$0.097$ vs $\$0.740$ per $10{,}000$ requests).}
   \item \rev{A paired bootstrap test (Section~\ref{sec:experiments:stat}) confirms DATS's SLA-violation rate is significantly lower than plain Thompson Sampling's, with $95\%$ CI $[-0.108\%, -0.022\%]$ on the difference and $p{=}0.007$.}
 \end{itemize}
+\rev{FrugalGPT-cascade and Complexity-static have nearly identical means in this stationary narrative workload because their thresholds route the same complexity classes; they are implemented as distinct policies, and the cascade policy still pays a longer tail on escalated requests ($p_{99}=965$~ms vs $951$~ms).}
 \rev{Thompson Sampling is close to DATS in the stationary workload because its deadline-penalised reward already favours safe arms; DATS's advantage is clearer under non-stationary networks (Section~\ref{sec:experiments:nonstationary}), heavy-tail stress (Section~\ref{sec:experiments:sensitivity}), and domain shifts (Section~\ref{sec:experiments:multidomain}).}
 
 Figure~\ref{fig:quality-sla-scatter} visualizes the low-SLA quality trade-off; Table~\ref{tab:main-results} reports the full policy range.
@@ -504,7 +509,7 @@ Figure~\ref{fig:latency-comparison} compares latency percentiles across policies
 \begin{figure*}[t]
   \centering
   \includegraphics[width=.96\textwidth]{figures/latency_comparison.pdf}
-  \caption{Latency distribution by policy, sorted by $p_{99}$. DATS, QoS-static, and Thompson Sampling keep $p_{99}$ at the $500$~ms SLA threshold; $\epsilon$-greedy and UCB1 trail by $\sim 100$--$130$~ms; all non-learning baselines miss the threshold by $200$~ms or more.}
+  \caption{Latency distribution by policy, sorted by $p_{99}$. DATS, QoS-static, and Thompson Sampling keep $p_{99}$ at the $500$~ms SLA threshold; exact $500$~ms tails reflect deadline-aware cancellation/fallback in the hybrid tier. $\epsilon$-greedy and UCB1 trail by $\sim 100$--$130$~ms; all non-learning baselines miss the threshold by $200$~ms or more.}
   \label{fig:latency-comparison}
 \end{figure*}
 
@@ -537,7 +542,7 @@ DATS and Thompson track the workload with comparably low cumulative regret, both
   \end{tabular}
 \end{table*}
 
-DATS has the lowest SLA-violation rate in both phases, with a $\sim0.16$--$0.18$\,pp gap over Thompson that is significant at $p{=}0.007$ (Section~\ref{sec:experiments:stat}). Its tail-aware deadline probability and recency-weighted miss counter react earlier to the shift, while Complexity-static nearly doubles its violations (Figure~\ref{fig:nonstationary-adaptation}).
+DATS has the lowest SLA-violation rate in both phases, with a $\sim0.16$--$0.18$\,pp descriptive gap over Thompson. The paired-bootstrap significance test in Section~\ref{sec:experiments:stat} is computed on the $5$-seed main workload in Table~\ref{tab:main-results}; Table~\ref{tab:nonstationary} shows that the same DATS $<$ Thompson ordering persists, with a larger gap, under the network shift. Its tail-aware deadline probability and recency-weighted miss counter react earlier to the shift, while Complexity-static nearly doubles its violations (Figure~\ref{fig:nonstationary-adaptation}).
 
 \begin{figure*}[t]
   \centering
@@ -594,7 +599,7 @@ Table~\ref{tab:multidomain} reports generalisation across three domains: interac
 \rev{
 \begin{table*}[t]
   \centering
-  \caption{Multi-domain generalisation (mean over $3$ seeds).}
+  \caption{Multi-domain generalisation (mean over $3$ seeds). The narrative row is evaluated after mixed-domain training, so absolute SLA values can differ slightly from the narrative-only $5$-seed main run in Table~\ref{tab:main-results}.}
   \label{tab:multidomain}
   \small
   \begin{tabular}{llccc}
@@ -620,7 +625,7 @@ Table~\ref{tab:multidomain} reports generalisation across three domains: interac
 \end{table*}
 }
 
-Narrative replicates the main table. On customer-QA, DATS ($2.19\%$) and Thompson ($1.94\%$) are within seed noise. On code generation both exceed $50\%$ violations because $\sim300$-token outputs take $\approx2$\,s to decode on either tier, outside the sub-second scope of Section~\ref{sec:intro-scope-note}; deployment would require a looser deadline or streaming. Figure~\ref{fig:multidomain} plots the breakdown.
+Narrative follows the same ordering as the main table; small absolute differences arise because this experiment uses mixed-domain training and $3$ seeds rather than the narrative-only $5$-seed main run. On customer-QA, DATS ($2.19\%$) and Thompson ($1.94\%$) are within seed noise. On code generation both exceed $50\%$ violations because $\sim300$-token outputs take $\approx2$\,s to decode on either tier, outside the sub-second scope of Section~\ref{sec:intro-scope-note}; deployment would require a looser deadline or streaming. Figure~\ref{fig:multidomain} plots the breakdown.
 
 \rev{
 \begin{figure*}[t]
@@ -639,7 +644,7 @@ A paired bootstrap test ($20{,}000$ resamples) over the $5$ seeds of Table~\ref{
 \subsection{\rev{End-to-End Deployment Validation}}
 \label{sec:experiments:real-api}
 
-\rev{We also ran both policies against live Gemini endpoints, using \texttt{gemini-3.1-flash-lite}~\citep{googledeepmind2026gemini31flashlite} as the edge proxy and \texttt{gemini-3.1-pro-preview}~\citep{googledeepmind2026gemini31pro} as cloud/judge. Under clean-API conditions ($L_{\max}{=}1500$\,ms, $n{=}9$), DATS reproduced its simulator advantage: $33\%$ SLA violations and $888$\,ms $p_{50}$ versus Thompson's $44\%$ and $1040$\,ms. Under API overload (raw cloud calls $10$--$34$\,s), DATS still kept $p_{50}$ latency $45\%$ below Thompson's. Full logs are in \texttt{results/real\_api\_routing.json}; Sections \ref{sec:experiments:sensitivity} remain the primary controlled evidence because they isolate routing effects from API noise.}
+\rev{We also ran both policies against live Gemini endpoints, using \texttt{gemini-3.1-flash-lite}~\citep{googledeepmind2026gemini31flashlite} as the edge proxy and \texttt{gemini-3.1-pro-preview}~\citep{googledeepmind2026gemini31pro} as cloud/judge. This quota-limited run ($L_{\max}{=}1500$\,ms, $n{=}9$) is a live-API sanity check, not a replacement for the controlled $360$-response quality validation in Section~\ref{sec:experiments:qvalid}. Under clean-API conditions, DATS reproduced its simulator advantage: $33\%$ SLA violations and $888$\,ms $p_{50}$ versus Thompson's $44\%$ and $1040$\,ms. Under API overload (raw cloud calls $10$--$34$\,s), DATS still kept $p_{50}$ latency $45\%$ below Thompson's. Full logs are in \texttt{results/real\_api\_routing.json}; Section~\ref{sec:experiments:qvalid} remains the primary controlled evidence for simulator quality assumptions, while Section~\ref{sec:experiments:sensitivity} isolates routing effects from latency-model noise.}
 
 \subsection{\rev{GPU-Calibrated Empirical Replay}}
 \label{sec:experiments:gpu-replay}
@@ -787,7 +792,7 @@ Responses were evaluated using LLM-as-judge~\citep{zheng2023judging} with Gemini
 \end{table*}
 
 Table~\ref{tab:quality-validation} compares measured quality values against simulator assumptions.
-\rev{Both measurement campaigns validate the simulator's assumed values, but in opposite directions: Gemini 2.5 measurements fall within $[-0.02, 0.00]$ of the assumed values (Gemini 2.5 Complex tier is slightly worse than assumed), while Gemini 3 measurements fall within $[+0.005, +0.030]$ of the assumed values (Gemini 3 is uniformly better than assumed). The simulator's assumed values therefore act as a \emph{conservative lower bound} on real LLM performance: any conclusions about edge-cloud routing derived from the simulator hold at least as strongly with Gemini 3 as with Gemini 2.5.}
+\rev{Both measurement campaigns validate the simulator's assumed values, but in opposite directions: Gemini 2.5 measurements fall within $[-0.02, 0.00]$ of the assumed values (the complex tier is slightly worse than assumed), while Gemini 3 measurements fall within $[+0.005, +0.030]$ of the assumed values. Thus the original Gemini 2.5 validation shows that the simulator is calibrated within a small error band, and the Gemini 3.1 re-measurement shows that the updated target-model assumptions are conservative for the newer model family.}
 
 \begin{itemize}
   \item \textbf{Edge quality stability confirmed}: Edge quality drops from $0.98$ (simple) to $0.92$ (complex), only a $6\%$ degradation, confirming that modern edge models (Gemini 3.1 Flash Lite) maintain high quality even for complex queries.
