@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated manuscript."
+title: "EdgeLLM-Router"
+authors:
+  - family-names: "Jeon"
+    given-names: "Minsu"
+  - family-names: "Kim"
+    given-names: "Minkyung"
+  - family-names: "Bae"
+    given-names: "Sohee"
+  - family-names: "Park"
+    given-names: "Sangdon"
+version: "1.0.0"
+date-released: "2026-06-07"

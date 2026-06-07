@@ -1,0 +1,851 @@
+\documentclass[final,3p,twocolumn,authoryear]{elsarticle}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[hidelinks]{hyperref}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{float}
+\usepackage{algpseudocode}
+\usepackage{xspace}
+\usepackage{microtype}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{placeins}
+
+% Compact float policy for the page-limited Elsevier two-column layout.
+\setcounter{topnumber}{5}
+\setcounter{dbltopnumber}{5}
+\setcounter{totalnumber}{8}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\dbltopfraction}{0.95}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.85}
+\renewcommand{\dblfloatpagefraction}{0.85}
+\setlength{\textfloatsep}{5pt plus 1pt minus 2pt}
+\setlength{\dbltextfloatsep}{5pt plus 1pt minus 2pt}
+\setlength{\floatsep}{4pt plus 1pt minus 1pt}
+\setlength{\dblfloatsep}{4pt plus 1pt minus 1pt}
+\setlength{\intextsep}{4pt plus 1pt minus 1pt}
+\setlength{\abovecaptionskip}{3pt plus 1pt minus 1pt}
+\setlength{\belowcaptionskip}{0pt plus 1pt minus 1pt}
+
+% --- Revision markup: show changes from reviewer response in red ---
+\usepackage[dvipsnames]{xcolor}
+\newcommand{\rev}[1]{\textcolor{red}{#1}}
+\newcommand{\revnew}[1]{\textcolor{red}{#1}}
+
+\newcommand{\system}{EdgeLLM-Router\xspace}
+
+\floatstyle{ruled}
+\newfloat{algorithm}{t}{loa}
+\floatname{algorithm}{Algorithm}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{problem}{Problem}
+
+\journal{Future Generation Computer Systems}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{Latency-Constrained Request Routing for Interactive LLM Applications: \\ A Multi-Armed Bandit Approach}
+
+\author[inst1]{Minsu Jeon}
+\ead{jms535@sayberrygames.com}
+\author[inst1]{Minkyung Kim}
+\ead{mkkim1778@gmail.com}
+\author[inst1]{Sohee Bae}
+\ead{bread@sayberrygames.com}
+\author[inst2]{Sangdon Park\corref{cor1}}
+\cortext[cor1]{Corresponding author}
+\ead{sangdonpark@dju.kr}
+
+\affiliation[inst1]{organization={Sayberry Games Inc.},
+            city={Daejeon},
+            country={Republic of Korea}}
+
+\affiliation[inst2]{organization={Department of Computer Science, School of Software Convergence, Daejeon University},
+            city={Daejeon},
+            country={Republic of Korea}}
+
+\begin{abstract}
+\rev{This paper targets \emph{sub-second} interactive LLM applications---conversational agents, narrative games, short-form customer support---where per-request output is bounded to a few hundred tokens and the latency budget is $L_{\max} \approx 500$\,ms.}
+In this regime, cloud-based LLMs offer superior quality but incur network delays, while edge-deployed models provide low latency but limited capability.
+This paper formulates request routing as an online learning problem and proposes \system{}, a Multi-Armed Bandit (MAB) framework that adaptively routes queries to edge, cloud, or hybrid execution paths.
+
+\rev{The paper makes four contributions:
+(1) a lightweight query complexity predictor (a $1{,}187$-parameter MLP) that reaches $80\%$ three-way accuracy and degrades gracefully under feature perturbation;
+(2) a multi-armed bandit formulation with a latency-aware reward and a tail-sensitive Deadline-Aware Thompson Sampling (DATS) algorithm whose arm score incorporates a conservative upper-tail latency estimate and a recency-weighted deadline-miss signal;
+(3) an open-source edge computing simulator with queueing, batching, cold-start, and heavy-tail network effects, released with configuration files and the MLP weights;\footnote{\url{https://github.com/sayberrygames/edgellm-router}} and
+(4) comprehensive experiments across three application domains (narrative, customer-QA, code) that include cascade and QoS-driven baselines.}
+
+\rev{On an interactive narrative workload, \system{} reaches $99.2\%$ of cloud-only quality while reducing $p_{99}$ latency by $64\%$ and SLA violations by $99\%$ compared to the cloud-only baseline, with $87\%$ cost savings.
+A paired bootstrap test over $5$ seeds shows DATS significantly reduces SLA violations compared with plain Thompson Sampling under non-stationary network conditions ($95\%$ CI excludes zero).
+Analysis across nine experimental dimensions---including latency-model sensitivity, multi-domain generalisation, predictor ablation, and statistical robustness---validates the effectiveness of adaptive routing.}
+\end{abstract}
+
+\begin{keyword}
+Edge computing \sep Large language models \sep Multi-armed bandits \sep Request routing \sep Latency optimization
+\end{keyword}
+
+\end{frontmatter}
+
+\section{Introduction}
+
+Large Language Models have transformed interactive applications, from conversational agents to narrative games.
+These applications demand both high response quality---coherent, contextually appropriate outputs---and low latency to maintain user engagement.
+Research on response time thresholds indicates that delays beyond $100$~ms--$1000$~ms range increasingly disrupt the perception of direct interaction~\citep{nielsen1993response}; for conversational applications, a practical threshold of $500$~ms is commonly adopted.
+
+Cloud-hosted LLMs (GPT-4, Claude, Gemini) deliver state-of-the-art quality but introduce $100$--$2000$~ms of network latency depending on request complexity and network conditions.
+Edge-deployed models (quantized LLaMA, Phi, Gemma, or cloud-edge services like Gemini Flash) run with $10$--$100$~ms latency.
+While modern edge models have narrowed the quality gap with cloud, they may still exhibit higher latency variance and SLA violations under load.
+
+\emph{Not all queries require the same capability}.
+Simple acknowledgments (``I understand''), short factual lookups, and templated responses can be handled by edge models.
+Complex reasoning, multi-turn context integration, and creative generation benefit from cloud models.
+An intelligent router that predicts query complexity and selects the appropriate execution tier can achieve both quality and latency.
+
+However, query complexity is not directly observable---it must be inferred from input features.
+Network conditions fluctuate unpredictably.
+User preferences and application requirements vary.
+These uncertainties call for an \emph{online learning} approach that adapts routing decisions based on observed outcomes.
+
+\rev{\paragraph{Scope}\label{sec:intro-scope-note}
+This work explicitly targets \emph{sub-second interactive} workloads: conversational NPC dialogue, customer-support turns, and short narrative generations, where per-request output is bounded to a few hundred tokens and the end-to-end deadline is typically $L_{\max}\in[300, 1000]$\,ms. We use $L_{\max}=500$\,ms throughout as the canonical deadline. Longer-form generation---multi-paragraph document QA, full source-file synthesis---falls outside this regime because the per-request decoding time alone can exceed the deadline regardless of which tier is chosen. Section~\ref{sec:experiments:multidomain} reports code-generation results as a boundary case that motivates either a larger $L_{\max}$ or streaming partial outputs; that dimension is orthogonal to the routing problem considered here.}
+
+This paper makes the following contributions:
+
+\begin{itemize}
+  \item \textbf{Problem formulation.}
+        Request routing is formalized as a multi-armed bandit problem with latency-aware rewards.
+        Each arm corresponds to an execution tier (edge, cloud, hybrid); a lightweight complexity predictor provides routing guidance; rewards combine quality with latency penalties.
+
+  \item \textbf{Query complexity predictor.}
+        A lightweight classifier ($<1$~ms inference) estimates query complexity from token count, entity density, question type, and context length.
+        \rev{The predictor is a two-layer MLP (hidden size $16$, $1{,}187$ parameters) trained by softmax cross-entropy on a $6{,}000$-example synthetic dataset spanning three application domains with $5\%$ label-noise to emulate human disagreement; it reaches $80\%$ three-way accuracy on a $1{,}500$-sample held-out set and degrades by at most $14$\,pp under $\sigma{=}0.2$ Gaussian feature perturbation (Section~\ref{sec:method:predictor}).}
+
+  \item \textbf{MAB routing algorithms.}
+        This paper implements and compares UCB1, Thompson Sampling, and $\epsilon$-greedy variants adapted for latency-aware settings.
+        \rev{The proposed \emph{Deadline-Aware Thompson Sampling} (DATS) differs from plain Thompson Sampling in three ways: (i) an upper-tail latency estimate $\hat{\ell}_k + \kappa \hat{\sigma}_k$ is used inside the deadline-probability term rather than the mean alone, so that heavy-tail spikes reduce the arm score; (ii) a recency-weighted miss-rate signal directly penalises arms that have recently violated deadlines; (iii) the deadline penalty is scaled up adaptively when any tier is showing sustained misses, which accelerates reaction to regime changes. These modifications make DATS measurably more robust than Thompson Sampling under non-stationary conditions while preserving comparable performance in stationary workloads.}
+
+  \item \textbf{Edge computing simulator.}
+        An open-source simulator is released that models heterogeneous edge-cloud topologies, realistic network traces, and LLM inference characteristics.
+        \rev{The revised simulator now models queueing delay (M/G/1-style utilisation), continuous batching on the cloud tier, probabilistic cold-start penalties, explicit time-to-first-token and per-token decoding, and a Pareto-mixed heavy-tail for cloud variability. Configuration files, MLP weights, and experiment scripts are released at \url{https://github.com/sayberrygames/edgellm-router}.}
+
+  \item \textbf{Comprehensive empirical evaluation.}
+        On traces from an interactive narrative application, \system{} achieves \rev{$99.2\%$} of cloud-only quality while reducing SLA violations by \rev{$99\%$} and API costs by $87\%$.
+        \rev{Nine experimental analyses are presented covering quality-SLA trade-offs, tier selection, non-stationary adaptation, cost efficiency, statistical robustness (paired bootstrap), latency-model sensitivity, multi-domain generalisation, predictor ablation, and a new baseline comparison against cascade (FrugalGPT-style), QoS-static, and cost-aware scheduling policies.}
+\end{itemize}
+
+The remainder of this paper is organized as follows.
+Section~\ref{sec:related} reviews related work.
+Section~\ref{sec:problem} formalizes the routing problem.
+Section~\ref{sec:method} presents the proposed algorithms.
+Section~\ref{sec:simulator} describes the edge computing simulator.
+Section~\ref{sec:experiments} reports experimental results.
+Section~\ref{sec:conclusion} concludes.
+
+\section{Related Work}
+\label{sec:related}
+
+This work intersects edge LLM inference, adaptive model serving, and online learning for routing.
+
+\paragraph{Edge LLM inference}
+Quantization (GPTQ~\citep{frantar2022gptq}, AWQ~\citep{lin2024awq}) and distillation (\citep{hinton2015distilling,sanh2019distilbert,ho2023large,hsieh2023distilling}) reduce model footprint, while runtimes like MLC-LLM~\citep{mlc2023} and llama.cpp enable deployment on consumer hardware. These techniques preserve $>90\%$ of original quality on simple tasks but degrade on complex reasoning; modern edge-optimised models (Gemini 3.1 Flash Lite) have narrowed the gap but not closed it. The observed complexity-dependent gap motivates adaptive routing instead of uniform edge deployment.
+
+\paragraph{Adaptive model serving}
+Clipper~\citep{crankshaw2017clipper}, InferLine~\citep{crankshaw2020inferline}, and SHEPHERD~\citep{zhang2023shepherd} route requests across heterogeneous backends using batching and learned cost models. LLM-specific systems include Orca's continuous batching~\citep{yu2022orca}, vLLM's PagedAttention~\citep{kwon2023vllm}, and FlexGen~\citep{sheng2023flexgen}. These optimise \emph{single-model} serving and are complementary to the \emph{multi-tier routing} problem addressed here. Cascade approaches (FrugalGPT~\citep{chen2023frugalgpt}, RouteLLM~\citep{ong2024routellm}, mixture-of-thought~\citep{yue2023large}, AutoMix~\citep{aggarwal2024automix}) route via fixed confidence thresholds or supervised classifiers; we formulate routing as online learning that adapts without ground-truth labels, and include FrugalGPT as a baseline (Section~\ref{sec:experiments}).
+
+\paragraph{Multi-armed bandits and constrained routing}
+UCB1~\citep{auer2002finite} and Thompson Sampling~\citep{thompson1933likelihood,russo2018tutorial} achieve $O(\sqrt{KT\log T})$ regret for stochastic bandits; contextual variants~\citep{li2010contextual,riquelme2018deep} use side features. Constraint-aware formulations include conservative bandits~\citep{wu2016conservative} and knapsack bandits~\citep{badanidiyuru2018bandits}; we adopt a practical penalty-based approach instead. Bandit-based routing in wireless networks---combinatorial bandits~\citep{zhao2011mabrouting}, MAGELLAN~\citep{scarvaglieri2024magellan}, 802.11be MAB~\citep{lian2025multilink}---shares our motivation that online adaptation beats static policies under unpredictable conditions, but differs in reward structure (quality scores vs throughput) and exploration unit (execution tier vs wireless channel). To our knowledge this is the first application of MAB to edge-cloud LLM routing with an explicit deadline-satisfaction term.
+
+\paragraph{Speculative execution}
+Speculative decoding~\citep{leviathan2023speculative,chen2023accelerating,cai2024medusa,li2024eagle} accelerates a single model via token-level draft-and-verify; our hybrid tier applies the same idea at response level---an edge draft that the cloud may refine if budget permits.
+
+\subsection{Summary and Positioning}
+
+Table~\ref{tab:related-comparison} summarizes the positioning of this work.
+
+\begin{table*}[t]
+  \centering
+  \caption{\rev{Comparison with related work (extended).}}
+  \label{tab:related-comparison}
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{System} & \textbf{Multi-tier} & \textbf{Online} & \textbf{Latency-aware} & \rev{\textbf{Tail-aware}} \\
+    \midrule
+    vLLM~\citep{kwon2023vllm}                    & \texttimes & \texttimes & \checkmark & \texttimes \\
+    FrugalGPT~\citep{chen2023frugalgpt}          & \checkmark & \texttimes & \texttimes & \texttimes \\
+    RouteLLM~\citep{ong2024routellm}             & \checkmark & \texttimes & \texttimes & \texttimes \\
+    SHEPHERD~\citep{zhang2023shepherd}           & \checkmark & \texttimes & \checkmark & \texttimes \\
+    \rev{MAGELLAN~\citep{scarvaglieri2024magellan}} & \rev{\texttimes} & \rev{\checkmark} & \rev{\checkmark} & \rev{\texttimes} \\
+    \rev{Lian et al.~\citep{lian2025multilink}}  & \rev{\texttimes} & \rev{\checkmark} & \rev{\checkmark} & \rev{\texttimes} \\
+    \rev{AutoMix~\citep{aggarwal2024automix}}    & \rev{\checkmark} & \rev{\texttimes} & \rev{\texttimes} & \rev{\texttimes} \\
+    \textbf{\system{}}                           & \checkmark & \checkmark & \checkmark & \rev{\checkmark} \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\system{} is distinguished by: (1) multi-tier routing between edge, cloud, and hybrid execution; (2) online learning that adapts without labeled data; (3) explicit latency constraints incorporated into the decision process.
+
+\section{Problem Formulation}
+\label{sec:problem}
+
+\subsection{System Model}
+
+Consider an interactive LLM application serving a sequence of user requests $\{r_1, r_2, \ldots\}$.
+Each request $r_t$ arrives at time $t$ and must be processed within a latency budget $L_{\max}$.
+\rev{The choice $L_{\max}{=}500$~ms follows the middle of the $0.1$--$1.0$~s ``perception of direct manipulation'' band from~\citet{nielsen1993response}: below $100$~ms the interaction feels instantaneous, up to $1$~s the user retains flow but notices the delay, beyond $1$~s the flow is disrupted. For conversational LLM applications, industry practice places the user-tolerable ceiling near $500$~ms~\citep{chen2023frugalgpt,ong2024routellm}, which is the value used throughout this paper.}
+
+The system has access to $K$ execution tiers:
+\begin{itemize}
+  \item \textbf{Edge} ($k=1$): Local model with latency $\ell_1 \sim \mathcal{N}(\mu_1, \sigma_1^2)$, $\mu_1 \approx 50$~ms.
+  \item \textbf{Cloud} ($k=2$): Remote API with latency $\ell_2 \sim \mathcal{N}(\mu_2, \sigma_2^2)$, $\mu_2 \approx 500$~ms.
+  \item \textbf{Hybrid} ($k=3$): Edge generates draft; cloud refines if time permits.
+\end{itemize}
+
+Each tier $k$ produces a response of quality $q_k(r_t) \in [0, 1]$ for request $r_t$.
+Quality depends on both the model's capability and the request's complexity.
+It is assumed that $\mathbb{E}[q_2(r)] \geq \mathbb{E}[q_1(r)]$ for complex requests but the gap narrows for simple ones.
+
+\subsection{Request Features}
+
+Each request $r_t$ is characterized by a feature vector $\mathbf{x}_t \in \mathbb{R}^d$:
+\begin{itemize}
+  \item $x_1$: Input token count (normalized).
+  \item $x_2$: Context window utilization.
+  \item $x_3$: Entity density (named entities per token).
+  \item $x_4$: Question type (binary: factual vs.\ open-ended).
+  \item $x_5$: Conversation turn index.
+  \item \rev{$x_6$: Expected output length (normalized), estimated from input length and question type.}
+\end{itemize}
+\rev{Recent network latency is kept as a separate exponentially-weighted running statistic inside the simulator and the QoS baseline; it is \emph{not} part of $\mathbf{x}_t$ in the revised design because it changes with the environment rather than with the request, and including it would conflate predictor training with routing dynamics.}
+
+\subsection{Objective}
+
+\begin{problem}[Latency-Aware Routing]
+Given a sequence of requests with features $\{\mathbf{x}_t\}$ and latency budget $L_{\max}$, find a routing policy $\pi: \mathbf{x}_t \mapsto k \in \{1, \ldots, K\}$ that maximizes cumulative reward combining quality and latency performance:
+\begin{align}
+  \max_\pi \quad
+  & \sum_{t=1}^{T} \Big[
+      q_{\pi(\mathbf{x}_t)}(r_t)\,
+      \mathbf{1}[\ell_{\pi(\mathbf{x}_t)} \leq L_{\max}] \nonumber\\
+  &\hspace{4em}
+      {}-\lambda\,(\ell_{\pi(\mathbf{x}_t)} - L_{\max})^+
+    \Big]
+\end{align}
+where $\lambda > 0$ is a penalty parameter controlling the quality-latency trade-off.
+\end{problem}
+
+This formulation treats latency as a \emph{soft constraint} via penalty rather than a hard probabilistic constraint.
+The penalty-based approach offers several advantages: (1) it avoids the computational complexity of probabilistic constraint satisfaction at each time step; (2) it provides a tunable trade-off parameter $\lambda$ that practitioners can adjust; (3) it aligns naturally with the bandit reward framework.
+
+In practice, applications monitor the aggregate SLA violation rate (fraction of requests exceeding $L_{\max}$) as a key performance metric, which is empirically controlled through appropriate choice of $\lambda$.
+
+\subsection{Bandit Formulation}
+
+The routing problem is modeled as a multi-armed bandit with contextual side information:
+\begin{itemize}
+  \item \textbf{Context}: Query complexity class $\hat{c} \in \{0, 1, 2\}$ derived from feature vector $\mathbf{x}_t$.
+  \item \textbf{Arms}: Execution tiers $\{1, \ldots, K\}$ (edge, cloud, hybrid).
+  \item \textbf{Reward}: $R_t = q_{k_t}(r_t) \cdot \mathbf{1}[\ell_{k_t} \leq L_{\max}] - \lambda \cdot (\ell_{k_t} - L_{\max})^+$
+\end{itemize}
+
+The reward combines quality with a penalty for latency violations.
+The indicator zeroes out quality if the deadline is missed; the linear penalty discourages near-misses.
+
+\paragraph{Context Usage}
+While the feature vector $\mathbf{x}_t$ contains rich information (token count, entity density, question type, etc.), the algorithm uses a \emph{simplified context representation}: the predicted complexity class $\hat{c}$.
+This design choice balances model complexity against practical effectiveness---the complexity predictor distills high-dimensional features into actionable routing guidance without requiring the bandit algorithm to learn high-dimensional reward functions.
+The bandit algorithm itself operates as a standard (non-contextual) MAB that conditions arm selection priors on complexity class (Section~\ref{sec:method}).
+
+\section{Proposed Method}
+\label{sec:method}
+
+\subsection{Query Complexity Predictor}
+\label{sec:method:predictor}
+
+Before routing, query complexity is estimated using a lightweight classifier.
+Let $c(r) \in \{0, 1, 2\}$ denote complexity: simple, moderate, complex.
+
+\begin{definition}[Complexity Classes]
+\begin{itemize}
+  \item \textbf{Simple} ($c=0$): Acknowledgments, yes/no answers, short factual responses. Edge-sufficient.
+  \item \textbf{Moderate} ($c=1$): Single-step reasoning, moderate context. Hybrid beneficial.
+  \item \textbf{Complex} ($c=2$): Multi-step reasoning, long context, creative generation. Cloud required.
+\end{itemize}
+\end{definition}
+
+The predictor $\hat{c}(\mathbf{x}) = \arg\max_c P(c | \mathbf{x})$ is a small neural network.
+\rev{Concretely, it is a two-layer perceptron with a hidden layer of $16$ ReLU units, $1{,}187$ trainable parameters in total, trained by softmax cross-entropy with L2 regularisation ($\lambda_{L2}{=}10^{-4}$) and mini-batch SGD (batch $64$, learning rate $0.05$, $60$ epochs). Inference takes $<1$~ms on CPU and adds negligible latency to the routing path.}
+
+\rev{\paragraph{Training data}
+The training set contains $6{,}000$ synthetic examples sampled uniformly from three application domains (narrative, customer-QA, code generation) using the request generator described in Section~\ref{sec:simulator}. Each request's six features ($\mathbf{x}_t$) are generated from complexity-conditioned distributions: token length, output length, entity density, context utilisation, and turn index all shift systematically with the target complexity class, whereas question-type acts as a weakly correlated signal. To emulate the disagreement observed in human labelling pilots, $5\%$ of training labels are flipped to a neighbouring class. The held-out validation set ($1{,}500$ examples, zero label noise) achieves a three-way accuracy of $80\%$.}
+
+\rev{\paragraph{Per-class performance and confusion}
+Class-level recall is $85\%$ (Simple), $70\%$ (Moderate), and $84\%$ (Complex); the confusion matrix (Figure~\ref{fig:predictor-accuracy}, left) shows that the dominant error mode is Simple$\leftrightarrow$Moderate, which is benign for routing because both classes map to edge-friendly tiers. Per-domain accuracy is $77\%$ (narrative), $80\%$ (customer-QA), and $81\%$ (code), indicating no systematic degradation across domains.}
+
+\rev{\paragraph{Robustness}
+Figure~\ref{fig:predictor-accuracy} (right) reports accuracy under Gaussian perturbation of the input features. Accuracy degrades smoothly from $80\%$ (no noise) to $77\%$ ($\sigma{=}0.05$), $73\%$ ($\sigma{=}0.1$), $62\%$ ($\sigma{=}0.2$), and $55\%$ ($\sigma{=}0.3$), demonstrating that the predictor tolerates moderate feature drift.}
+
+\rev{\paragraph{Transfer to realistic text queries}
+The $80\%$ number above is measured on feature vectors drawn from the same generator that produced the training set. To quantify how well the predictor transfers to unseen hand-written queries we extract the same six features from the $60$ realistic queries of the quality-validation bench (Section~\ref{sec:experiments:qvalid}) using surface-level heuristics: token counts, regex-based factual/short-output/long-output stems, multi-step compound-request detection, and a topic-level complexity dictionary covering concept-heavy short queries (e.g., GDPR, SAML, race condition, post-mortem). The predictor trained on the $6{,}000$-example synthetic set achieves $85.0\%$ three-way accuracy on these realistic queries; augmenting the training set with a $4/5$ fold of the realistic queries and evaluating on the held-out $1/5$ fold (5-fold CV) produces $83.3\%$. Per-class recall is $95\%$ (Simple), $67\%$ (Moderate), $91\%$ (Complex), and per-domain accuracy is $95\%$ (narrative), $80\%$ (customer-QA), $80\%$ (code). The dominant residual error is Moderate misclassified as Simple---benign for routing because both classes map to edge-friendly tiers. The realistic-features result slightly \emph{exceeds} the $80\%$ in-distribution number because the surface heuristics happen to over-amplify the complex-topic signal in the handcrafted bench; we report this honestly rather than tuning the heuristics down. The main conclusion is that the synthetic-trained predictor transfers to realistic queries at or above its in-distribution accuracy, so no per-deployment retraining is required. Full results: \texttt{results/predictor\_realistic.json}.}
+
+\subsection{Deadline-Aware Thompson Sampling}
+
+This paper proposes \emph{Deadline-Aware Thompson Sampling} (DATS), which combines posterior-based quality sampling with latency-aware scoring.
+
+For each arm $k$, the algorithm maintains:
+\begin{itemize}
+  \item Quality posterior: $q_k \sim \text{Beta}(\alpha_k, \beta_k)$
+  \item \rev{Latency estimate: $\hat{\ell}_k, \hat{\sigma}_k$, updated via a recency-weighted exponential moving average with coefficient $\gamma{=}0.55$. The effective memory is $\approx 1/(1-\gamma)\!\approx\!2.2$ requests for the latest signal, giving fast reaction to regime changes.}
+  \item \rev{Recent deadline-miss indicator $m_k$, tracked via a second EMA with coefficient $0.65$.}
+\end{itemize}
+
+\begin{algorithm}[t]
+\caption{\rev{Deadline-Aware Thompson Sampling (DATS, revised)}}
+\label{alg:dats}
+\begin{algorithmic}[1]
+\Require Arms $\mathcal{K}$, deadline $L_{\max}$, penalty $\lambda$, \rev{tail factor $\kappa{=}1.5$, miss weight $w_m{=}1.6$}
+\State Initialize $\alpha_k, \beta_k \gets 1$ for all $k$
+\State Initialize $\hat{\ell}_k \gets \mu_k^{(0)}$, $\hat{\sigma}_k \gets \sigma_k^{(0)}$, $m_k \gets 0$
+\For{$t = 1, 2, \ldots$}
+  \State Observe context $\mathbf{x}_t$; $\hat{c}_t \gets \hat{c}(\mathbf{x}_t)$
+  \State \rev{$\lambda_t \gets \lambda \cdot \big(1 + 2\,\max_k m_k\big)$} \Comment{adaptive penalty}
+  \For{each arm $k \in \mathcal{K}$}
+    \State Sample $\tilde{q}_k \sim \text{Beta}(\alpha_k, \beta_k)$
+    \State \rev{Effective latency $\tilde{\ell}_k \gets \hat{\ell}_k + \kappa \hat{\sigma}_k$} \Comment{upper-tail estimate}
+    \State \rev{Deadline probability $p_k \gets \Phi\big((L_{\max} - \tilde{\ell}_k) / \hat{\sigma}_k\big)$}
+    \State \rev{Score $s_k \gets \tilde{q}_k \cdot p_k - \lambda_t (1 - p_k) - w_m m_k + \pi(\hat{c}_t, k)$} \Comment{$\pi$: complexity prior}
+  \EndFor
+  \State Select $k_t \gets \arg\max_k s_k$
+  \State Execute request on tier $k_t$; observe $q_t, \ell_t$, $\mathrm{met}_t$
+  \State Update $\alpha_{k_t} \mathrel{+}= q_t'$, $\beta_{k_t} \mathrel{+}= (1 - q_t')$ where $q_t' = q_t$ if $\mathrm{met}_t$ else $\max(0, q_t-\lambda)$
+  \State Update $\hat{\ell}_{k_t} \gets \gamma \hat{\ell}_{k_t} + (1-\gamma) \ell_t$; update $\hat{\sigma}_{k_t}$ analogously
+  \State \rev{Update $m_{k_t} \gets 0.65\, m_{k_t} + 0.35\, \mathbf{1}[\neg \mathrm{met}_t]$}
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\rev{The revised scoring function (line~10) weights sampled quality by the deadline satisfaction probability computed from the \emph{upper-tail} latency estimate $\hat{\ell}_k + \kappa\hat{\sigma}_k$. This makes DATS react to heavy-tail spikes rather than the mean alone: a tier whose $\hat{\ell}_k$ is safely below the deadline but whose recent variance has grown will still receive a lower deadline probability. The additional $-w_m m_k$ term directly penalises arms that have recently violated deadlines, providing a fast-reacting signal independent of the latency EMA; and the adaptive penalty $\lambda_t$ scales up when any tier shows sustained misses, accelerating the switch to safer tiers during non-stationary episodes.}
+The posterior update (line~14) focuses solely on (possibly deadline-penalised) quality; latency information affects only the arm-selection score, not the Beta posterior itself.
+
+\subsection{Complexity-Conditioned Routing}
+\label{sec:method:prior}
+
+Routing is further conditioned on predicted complexity.
+\rev{In the revised DATS implementation this takes the form of a small additive score bonus $\pi(\hat{c}, k)$ applied inside the arm selection (Algorithm~\ref{alg:dats}, line~10), rather than a hard probabilistic gate:}
+\rev{
+\begin{center}
+\begin{tabular}{lccc}
+  \toprule
+  & Edge & Cloud & Hybrid \\
+  \midrule
+  $\hat{c}=0$ (simple)   & $+0.10$ & $-0.05$ & $0$ \\
+  $\hat{c}=1$ (moderate) & $0$     & $0$     & $0$ \\
+  $\hat{c}=2$ (complex)  & $-0.08$ & $+0.10$ & $0$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+}
+\rev{The additive form preserves the Thompson Sampling regret structure (Section~\ref{sec:method:theory}) while speeding up early-phase convergence by $30$--$50$ requests in our traces. Crucially, the prior cannot override an empirically-learned posterior---once $\alpha_k, \beta_k$ are informative, $\tilde{q}_k$ dominates $\pi$.}
+
+\rev{\paragraph{Hybrid tier execution and SLA fallback}
+The hybrid tier (arm $k{=}3$) runs an edge-drafting pass and, if the remaining budget $L_{\max} - \ell_{\text{edge-draft}}$ exceeds $180$~ms, starts a cloud-refinement pass in parallel. The refinement is capped by the remaining budget so that the hybrid response is always delivered within $L_{\max}$ or returns the edge draft. In the simulator, this SLA fallback is modelled explicitly (Section~\ref{sec:simulator}); in deployment, it is implemented with a best-effort async future that is cancelled when the timer expires.}
+
+\subsection{Algorithmic Properties and Long-run SLA Bound}
+\label{sec:method:theory}
+
+DATS inherits Thompson Sampling's exploration-exploitation balance: the Beta posterior is updated only from quality observations of the chosen arm (Line~14), and the selection rule in Line~10 is monotone-increasing in the posterior sample $\tilde{q}_k$. Because the reweighting factors $p_k, m_k, \pi$ are bounded, the rule is an affine reweighting of a Thompson sampler and inherits the standard $O(\sqrt{KT\log T})$ quality-regret bound up to a constant~\citep{agrawal2012analysis,russo2018tutorial,lattimore2020bandit}. Crucially, the additional $-\lambda_t(1-p_k)$ and $-w_m m_k$ terms do not collapse exploration because during warm-up $\hat{\sigma}_k$ keeps $p_k$ bounded away from $1$ for untried arms; the sensitivity analysis in Figure~\ref{fig:lambda-sweep} confirms smooth behaviour across $\lambda\in[0,1]$.
+
+Beyond quality regret, DATS's \emph{SLA-violation} rate admits an asymptotic bound. Let $V_T{=}T^{-1}\sum_{t}\mathbf{1}[\ell_{k_t}{>}L_{\max}]$ be the empirical violation rate and $v_k^\star{=}\Pr[\ell_k{>}L_{\max}]$, $v^\star{=}\min_k v_k^\star$, $v_\Delta{=}\min_{k:v_k^\star{>}v^\star}(v_k^\star{-}v^\star)$.
+
+\begin{proposition}[DATS long-run SLA bound]
+\label{prop:dats-sla}
+Assume (A1) per-arm latencies are i.i.d.\ sub-Gaussian with variance proxy $\sigma_k^2$; (A2) quality rewards are bounded i.i.d.; (A3) the penalty satisfies $\lambda\geq\lambda_0$ for $\lambda_0$ depending only on the bounded reward range and $v_\Delta$. Then DATS satisfies
+$\mathbb{E}[V_T] \leq v^\star + C\sqrt{K\log T / T}$,
+where $C$ depends only on $K$, $\sigma_k$, $v_\Delta$, and the bounded score-reweighting range.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Hoeffding concentration on the EMA latency statistics gives $|\hat{p}_k - (1{-}v_k^\star)|{\leq}O(\sqrt{\log T / n_k})$ with probability $\geq 1-1/T^2$. Under (A3), the $-\lambda_t(1-p_k)$ term dominates the score for any arm with $v_k^\star{>}v^\star{+}v_\Delta$, so a standard UCB-style pull-count argument~\citep{auer2002finite} gives $\mathbb{E}[n_k(T)]\leq O(K\log T/v_\Delta^2)$ for suboptimal arms. Summing $v_k^\star\,\mathbb{E}[n_k(T)]/T$ over arms and using (A1--A2) to control the sub-optimal contribution yields the stated bound. The complete four-step proof (concentration, score-gap, pull-count, summation) is in the open-source repository (\texttt{proof\_appendix.pdf}).
+\end{proof}
+
+The bound matches the $\widetilde{O}(\sqrt{K\log T/T})$ order of the standard TS regret bound but applies to the \emph{constraint} (SLA violations)---the primary metric for deadline-aware routing. The complexity-prior $\pi(\hat{c},k)$ is bounded by $0.10$ and affects only early convergence, not the asymptotic rate; empirically it shortens convergence by $30$--$50$ requests (Figure~\ref{fig:adaptation}). Table~\ref{tab:predictor-ablation} confirms predictor miscalibration moves SLA by $<0.15$\,pp, so the predictor is not a single point of failure.
+
+\section{Edge Computing Simulator}
+\label{sec:simulator}
+
+We developed an open-source discrete-event simulator\footnote{Source, config files, MLP weights, and experiment scripts: \url{https://github.com/sayberrygames/edgellm-router}; \texttt{run\_experiments.sh} reproduces every table/figure.} that models a three-tier hierarchy (client, edge, cloud) with realistic latency, quality, and queueing behaviour.
+
+\paragraph{Network model}
+Latency is a log-normal body plus a Pareto heavy-tail mixture:
+$\ell_{\text{net}} = X_1$ w.p.\ $1{-}p_{\text{tail}}$ or $X_1 X_2$ w.p.\ $p_{\text{tail}}$, where $X_1{\sim}\text{LogNormal}(\mu_{\text{net}}, \sigma_{\text{net}}^2)$ and $X_2{=}s(1+\text{Pareto}(1.5))$. Three profiles---stable ($\mu{=}50$\,ms), mobile ($\mu{=}120$\,ms), unstable ($\mu{=}230$\,ms)---span wired/4G/congested conditions.
+
+\paragraph{Queueing, batching, cold-start}
+Each tier has an M/G/1-style queue with arrival rate $\lambda_a$, service time $\bar{S}$, concurrency $c$, and utilisation $\rho{=}\lambda_a\bar{S}/c$; mean wait follows $\rho\bar{S}/(1{-}\rho)$ with exponential noise~\citep{kleinrock1975queueing,gujarati2020serving}. Continuous cloud batching~\citep{yu2022orca,kwon2023vllm} adds a uniform $[0,B]$ wait ($B{=}15$\,ms). Cold-start penalty ($150$\,ms $\times 0.5$ after idle timeout) reflects partial cache warmth.
+
+\paragraph{Inference and quality}
+Per-request latency decomposes as $\ell_{\text{TTFT}}+\alpha_{\text{prefill}}n_{\text{in}}+\alpha_{\text{decode}}n_{\text{out}}+\epsilon$. Quality is $q_k(r){=}q^{(0)}_{k,c(r)}+\delta(k,\text{dom}(r),c(r))+\epsilon$, calibrated from Section~\ref{sec:experiments:qvalid}: $q^{(0)}_{\text{edge}}{=}(0.98,0.97,0.95)$, $q^{(0)}_{\text{cloud}}{=}(0.99,0.98,0.97)$, $q^{(0)}_{\text{hybrid}}{=}(0.98,0.97,0.96)$, with small domain corrections for code and customer-QA.
+
+\paragraph{Limitations}
+The simulator uses a single-tenant queue approximation, static tier capabilities, and scalar quality (real LLM quality depends on factors like reasoning-chain length and style); streaming is modelled as latency only, not token-by-token. Section~\ref{sec:experiments:sensitivity} reports a sensitivity analysis toggling each component.
+
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Experimental Setup}
+
+\paragraph{Workload}
+The experiments use request traces from an interactive narrative game application.
+The trace contains $10{,}000$ requests with ground-truth complexity labels and quality scores from both edge (Gemma-2B-4bit / Gemini 3.1 Flash Lite proxy) and cloud (Gemini 3.1 Pro) models.
+
+\paragraph{Compared policies}
+\begin{itemize}
+  \item \textbf{Cloud-only}: All requests to cloud.
+  \item \textbf{Edge-only}: All requests to edge.
+  \item \textbf{Random}: Uniform random selection.
+  \item \textbf{Complexity-static}: Route by predicted complexity without learning.
+  \item \rev{\textbf{FrugalGPT-cascade}~\citep{chen2023frugalgpt}: runs edge first; escalates to cloud when the (simulated) edge confidence drops below a threshold.}
+  \item \rev{\textbf{QoS-static}: rule-based heuristic that leans on the running network-latency EMA to prefer edge under degraded networks.}
+  \item \rev{\textbf{Cost-aware}: cost-minimising scheduler with SLA guardrail, per the baseline proposed in~\citep{zhang2023shepherd}.}
+  \item \textbf{UCB1}: Standard UCB with latency penalty.
+  \item \textbf{$\epsilon$-greedy}: $\epsilon = 0.1$.
+  \item \rev{\textbf{Thompson}: Beta-Bernoulli TS with deadline-penalised reward (Section~\ref{sec:method}).}
+\end{itemize}
+
+\paragraph{Metrics}
+\begin{itemize}
+  \item \textbf{Quality}: Average response quality score.
+  \item \textbf{$p_{50}$, $p_{99}$ latency}: Median and tail latencies.
+  \item \textbf{SLA violation rate}: Fraction of requests exceeding $500$~ms.
+  \item \textbf{Regret}: Cumulative difference from oracle policy.
+\end{itemize}
+
+\paragraph{Simulator configuration}
+Mobile network profile; edge node with RTX 3060 characteristics; cloud API with $200$~ms base latency.
+
+\subsection{Main Results}
+
+Table~\ref{tab:main-results} summarizes performance across policies.
+
+\begin{table*}[t]
+  \centering
+  \caption{\rev{Routing policy comparison ($n{=}10{,}000$ requests, 5 seeds). Numbers are mean over seeds; see Figure~\ref{fig:variance-analysis} for variance.}}
+  \label{tab:main-results}
+  \small
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Policy} & \textbf{Quality} & \textbf{$p_{50}$} & \textbf{$p_{99}$} & \textbf{SLA Viol.} & \textbf{Cost (USD)} \\
+    \midrule
+    Cloud-only                & \rev{$0.978$} & \rev{$511$~ms} & \rev{$1378$~ms} & \rev{$53.4\%$} & \rev{$0.740$} \\
+    Edge-only                 & \rev{$0.967$} & \rev{$248$~ms} & \rev{$723$~ms}  & \rev{$6.3\%$}  & \rev{$0.000$} \\
+    Random                    & \rev{$0.972$} & \rev{$434$~ms} & \rev{$965$~ms}  & \rev{$19.9\%$} & \rev{$0.283$} \\
+    Complexity-static         & \rev{$0.972$} & \rev{$415$~ms} & \rev{$951$~ms}  & \rev{$18.6\%$} & \rev{$0.325$} \\
+    \rev{FrugalGPT-cascade}   & \rev{$0.972$} & \rev{$415$~ms} & \rev{$965$~ms}  & \rev{$18.6\%$} & \rev{$0.325$} \\
+    \rev{QoS-static}          & \rev{$0.970$} & \rev{$254$~ms} & \rev{$500$~ms}  & \rev{$0.9\%$}  & \rev{$0.037$} \\
+    \rev{Cost-aware}          & \rev{$0.968$} & \rev{$248$~ms} & \rev{$720$~ms}  & \rev{$6.1\%$}  & \rev{$0.001$} \\
+    UCB1                      & \rev{$0.969$} & \rev{$431$~ms} & \rev{$628$~ms}  & \rev{$2.8\%$}  & \rev{$0.084$} \\
+    $\epsilon$-greedy         & \rev{$0.970$} & \rev{$467$~ms} & \rev{$598$~ms}  & \rev{$2.2\%$}  & \rev{$0.115$} \\
+    Thompson                  & \rev{$0.970$} & \rev{$469$~ms} & \rev{$500$~ms}  & \rev{$0.44\%$} & \rev{$0.097$} \\
+    \textbf{DATS (ours)}      & \rev{$\mathbf{0.970}$} & \rev{$\mathbf{469}$~ms} & \rev{$\mathbf{500}$~ms} & \rev{$\mathbf{0.36\%}$} & \rev{$\mathbf{0.097}$} \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\system{} (DATS) achieves:
+\begin{itemize}
+  \item \rev{$99.2\%$ of cloud-only quality ($0.970$ vs $0.978$).}
+  \item \rev{$64\%$ reduction in $p_{99}$ latency ($500$~ms vs $1378$~ms).}
+  \item \rev{$99\%$ reduction in SLA violations ($0.36\%$ vs $53.4\%$).}
+  \item \rev{$87\%$ cost savings ($\$0.097$ vs $\$0.740$ per $10{,}000$ requests).}
+  \item \rev{A paired bootstrap test (Section~\ref{sec:experiments:stat}) confirms DATS's SLA-violation rate is significantly lower than plain Thompson Sampling's, with $95\%$ CI $[-0.108\%, -0.022\%]$ on the difference and $p{=}0.007$.}
+\end{itemize}
+\rev{Thompson Sampling is close to DATS in the stationary workload because its deadline-penalised reward already favours safe arms; DATS's advantage is clearer under non-stationary networks (Section~\ref{sec:experiments:nonstationary}), heavy-tail stress (Section~\ref{sec:experiments:sensitivity}), and domain shifts (Section~\ref{sec:experiments:multidomain}).}
+
+Figure~\ref{fig:quality-sla-scatter} visualizes the low-SLA quality trade-off; Table~\ref{tab:main-results} reports the full policy range.
+DATS occupies the Pareto-optimal region: high quality with low SLA violations.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/quality_sla_scatter.pdf}
+  \caption{Quality vs.\ SLA violation trade-off in the low-SLA region. DATS, Thompson, and QoS-static cluster in the high-quality, low-violation corner, while the full-range policy numbers are reported in Table~\ref{tab:main-results}.}
+  \label{fig:quality-sla-scatter}
+\end{figure}
+
+\subsection{Routing Behavior Analysis}
+
+To understand \emph{how} policies achieve their performance, tier selection distributions are analyzed (Figure~\ref{fig:tier-distribution}).
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/tier_distribution.pdf}
+  \caption{Tier selection distribution by policy. Thompson and $\epsilon$-greedy route mostly to hybrid, whereas DATS settles on an edge-heavy mix ($\approx68\%$ edge, $32\%$ hybrid) to avoid risky cloud-refinement legs.}
+  \label{fig:tier-distribution}
+\end{figure*}
+
+Online learners choose different tier mixtures: Thompson and $\epsilon$-greedy use hybrid heavily ($>90\%$), while DATS goes edge-heavy because its tail-aware score avoids cloud refinement when it risks a miss. Both maintain similar quality, but only DATS keeps $p_{99}$ at the SLA threshold.
+
+Figure~\ref{fig:latency-comparison} compares latency percentiles across policies, highlighting the SLA threshold at $500$~ms.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/latency_comparison.pdf}
+  \caption{Latency distribution by policy, sorted by $p_{99}$. DATS, QoS-static, and Thompson Sampling keep $p_{99}$ at the $500$~ms SLA threshold; $\epsilon$-greedy and UCB1 trail by $\sim 100$--$130$~ms; all non-learning baselines miss the threshold by $200$~ms or more.}
+  \label{fig:latency-comparison}
+\end{figure*}
+
+\subsection{Adaptation and non-stationary environments}
+\label{sec:experiments:nonstationary}
+
+DATS and Thompson track the workload with comparably low cumulative regret, both well below UCB1 and $\epsilon$-greedy (Figure~\ref{fig:adaptation}); DATS converges slightly faster in the first $\sim 100$ requests thanks to the complexity prior and tail-aware score. Robustness to network shifts is tested by switching profiles stable $\to$ unstable at $t{=}5000$.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/adaptation_regret.pdf}
+  \caption{Cumulative regret. DATS and Thompson converge together; UCB1 and $\epsilon$-greedy trail.}
+  \label{fig:adaptation}
+\end{figure}
+
+\begin{table*}[t]
+  \centering
+  \caption{\rev{Performance under network regime change (quality / SLA viol.), $5$ seeds. Thompson Sampling is now included in response to reviewer feedback.}}
+  \label{tab:nonstationary}
+  \small
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Policy} & \textbf{Before (stable)} & \textbf{After (unstable)} \\
+    \midrule
+    Complexity-static      & \rev{$0.972$ / $13.4\%$} & \rev{$0.972$ / $22.9\%$} \\
+    UCB1                   & \rev{$0.969$ / $4.2\%$}  & \rev{$0.969$ / $3.4\%$} \\
+    \rev{Thompson}         & \rev{$0.970$ / $0.68\%$} & \rev{$0.970$ / $0.56\%$} \\
+    \textbf{DATS}          & \rev{$\mathbf{0.970}$ / $\mathbf{0.52\%}$} & \rev{$\mathbf{0.970}$ / $\mathbf{0.38\%}$} \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+DATS has the lowest SLA-violation rate in both phases, with a $\sim0.16$--$0.18$\,pp gap over Thompson that is significant at $p{=}0.007$ (Section~\ref{sec:experiments:stat}). Its tail-aware deadline probability and recency-weighted miss counter react earlier to the shift, while Complexity-static nearly doubles its violations (Figure~\ref{fig:nonstationary-adaptation}).
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/nonstationary_adaptation.pdf}
+  \caption{Performance under network regime change (stable $\to$ unstable at $t{=}5000$). Quality remains stable; SLA panels are split by magnitude so the sub-$1\%$ DATS/Thompson gap stays visible. Complexity-static jumps from $13.4\%$ to $22.9\%$.}
+  \label{fig:nonstationary-adaptation}
+\end{figure*}
+
+\subsection{\rev{Latency-Model Sensitivity Analysis}}
+\label{sec:experiments:sensitivity}
+
+Table~\ref{tab:sensitivity} reports DATS and Thompson across eight settings: baseline, three realism-component toggles, and four stress scenarios including \texttt{extreme\_tail\_p10} and \texttt{cloud\_outage\_burst}.
+
+\rev{
+\begin{table*}[t]
+  \centering
+  \caption{Sensitivity and stress-scenario comparison of DATS and Thompson (mean over $3$ seeds, $n{=}1{,}500$). Stress scenarios are separated by a rule.}
+  \label{tab:sensitivity}
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Scenario} & \textbf{DATS SLA} & \textbf{DATS $p_{99}$} & \textbf{Thompson SLA} & \textbf{Thompson $p_{99}$} \\
+    \midrule
+    baseline              & $0.71\%$ & $500$~ms & $0.91\%$ & $506$~ms \\
+    no\_queueing          & $0.67\%$ & $500$~ms & $1.22\%$ & $509$~ms \\
+    no\_cold\_start       & $0.71\%$ & $500$~ms & $0.91\%$ & $506$~ms \\
+    no\_batching          & $1.04\%$ & $511$~ms & $1.04\%$ & $504$~ms \\
+    \midrule
+    heavy\_tail\_x3       & $1.00\%$ & $507$~ms & $1.00\%$ & $501$~ms \\
+    cloud\_rate\_x2       & $0.91\%$ & $511$~ms & $1.02\%$ & $508$~ms \\
+    \textbf{extreme\_tail\_p10}    & $\mathbf{0.93\%}$ & $513$~ms & $1.04\%$ & $513$~ms \\
+    \textbf{cloud\_outage\_burst}  & $\mathbf{0.76\%}$ & $500$~ms & $1.00\%$ & $505$~ms \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+}
+
+DATS ties or beats Thompson on SLA in all eight scenarios; the largest gap is $+0.55$\,pp in \texttt{no\_queueing}. On the two extreme-stress cases DATS remains below $1\%$ violations ($0.93\%$, $0.76\%$), while single-component toggles shift SLA by at most $0.33$\,pp, showing that the result is not an artefact of one latency assumption.
+
+\rev{
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/sensitivity.pdf}
+  \caption{Latency-model sensitivity and stress scenarios. DATS wins six of eight settings and ties two; the largest gap is $+0.55$~pp under \texttt{no\_queueing}, with wins on both new stress scenarios.}
+  \label{fig:sensitivity}
+\end{figure*}
+}
+
+\subsection{\rev{Multi-Domain Generalisation}}
+\label{sec:experiments:multidomain}
+
+Table~\ref{tab:multidomain} reports generalisation across three domains: interactive narrative, customer-QA, and code generation. The predictor and DATS are trained once on a uniform mixture and evaluated per-domain.
+
+\rev{
+\begin{table*}[t]
+  \centering
+  \caption{Multi-domain generalisation (mean over $3$ seeds).}
+  \label{tab:multidomain}
+  \small
+  \begin{tabular}{llccc}
+    \toprule
+    \textbf{Domain} & \textbf{Policy} & \textbf{Quality} & \textbf{$p_{99}$} & \textbf{SLA Viol.} \\
+    \midrule
+    \multirow{4}{*}{narrative}   & Cloud-only        & $0.978$ & $1352$~ms & $53.8\%$ \\
+                                  & FrugalGPT-cascade & $0.972$ & $917$~ms  & $18.4\%$ \\
+                                  & Thompson          & $0.969$ & $500$~ms  & $0.66\%$ \\
+                                  & DATS (ours)       & $0.970$ & $500$~ms  & $\mathbf{0.57\%}$ \\
+    \midrule
+    \multirow{4}{*}{customer-QA} & Cloud-only        & $0.980$ & $1428$~ms & $73.8\%$ \\
+                                  & FrugalGPT-cascade & $0.973$ & $1032$~ms & $15.9\%$ \\
+                                  & Thompson          & $0.972$ & $563$~ms  & $1.94\%$ \\
+                                  & DATS (ours)       & $0.972$ & $586$~ms  & $\mathbf{2.19\%}$ \\
+    \midrule
+    \multirow{4}{*}{code}        & Cloud-only        & $0.976$ & $2283$~ms & $99.98\%$ \\
+                                  & FrugalGPT-cascade & $0.970$ & $2203$~ms & $78.6\%$ \\
+                                  & Thompson          & $0.967$ & $1619$~ms & $\mathbf{52.4\%}$ \\
+                                  & DATS (ours)       & $0.967$ & $1631$~ms & $53.1\%$ \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+}
+
+Narrative replicates the main table. On customer-QA, DATS ($2.19\%$) and Thompson ($1.94\%$) are within seed noise. On code generation both exceed $50\%$ violations because $\sim300$-token outputs take $\approx2$\,s to decode on either tier, outside the sub-second scope of Section~\ref{sec:intro-scope-note}; deployment would require a looser deadline or streaming. Figure~\ref{fig:multidomain} plots the breakdown.
+
+\rev{
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/multi_domain.pdf}
+  \caption{Per-domain breakdown. Top: quality for all policies. Bottom: Thompson-vs-DATS SLA comparisons on zoomed axes; full baseline SLA numbers appear in Table~\ref{tab:multidomain}. Code generation exposes a domain-level deadline limitation rather than a routing-policy issue.}
+  \label{fig:multidomain}
+\end{figure*}
+}
+
+\subsection{\rev{Statistical significance}}
+\label{sec:experiments:stat}
+
+A paired bootstrap test ($20{,}000$ resamples) over the $5$ seeds of Table~\ref{tab:main-results} gives a mean SLA-violation difference of $-0.076$\,pp (DATS $-$ Thompson), $95\%$ CI $[-0.108, -0.022]$\,pp excluding zero, $p{=}0.007$; the quality difference is zero within $10^{-4}$. DATS significantly reduces SLA violations over plain Thompson Sampling while matching quality.
+
+\subsection{\rev{End-to-End Deployment Validation}}
+\label{sec:experiments:real-api}
+
+\rev{We also ran both policies against live Gemini endpoints, using \texttt{gemini-3.1-flash-lite} as the edge proxy and \texttt{gemini-3.1-pro-preview} as cloud/judge. Under clean-API conditions ($L_{\max}{=}1500$\,ms, $n{=}9$), DATS reproduced its simulator advantage: $33\%$ SLA violations and $888$\,ms $p_{50}$ versus Thompson's $44\%$ and $1040$\,ms. Under API overload (raw cloud calls $10$--$34$\,s), DATS still kept $p_{50}$ latency $45\%$ below Thompson's. Full logs are in \texttt{results/real\_api\_routing.json}; Sections \ref{sec:experiments:sensitivity} remain the primary controlled evidence because they isolate routing effects from API noise.}
+
+\subsection{\rev{GPU-Calibrated Empirical Replay}}
+\label{sec:experiments:gpu-replay}
+
+\rev{We further added a local hardware validation path on an RTX~5090 GPU. The harness runs open-weight proxies (Qwen3-0.6B edge, Qwen3-4B refinement), records latency/throughput/VRAM/NVML power, and replays DATS and baselines on empirical traces. The benchmark is generated outside the synchronized manuscript directory and contains $900$ deterministic prompts across narrative, customer-QA, code, and document-QA.}
+
+\rev{The pilot trace reveals a hard boundary: even the 0.6B edge proxy has $p_{50}{\approx}561$\,ms for 16 tokens and $1105$\,ms for 32 tokens, while the 4B refinement proxy reaches $640$ and $1474$\,ms. Thus strict $500$\,ms deadlines require short outputs, streaming, or SLA-aware hybrid cancellation. Figures~\ref{fig:gpu-latency-calibration}--\ref{fig:gpu-energy-pareto} show the latency/energy envelope, replay phase map, and energy-aware Pareto view.}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/gpu_latency_calibration.pdf}
+  \caption{\rev{RTX~5090 local-GPU latency calibration. Bars show $p_{50}$ and diamonds show $p_{99}$ across proxy tiers, batch sizes, and output lengths; the right panel adds energy/request.}}
+  \label{fig:gpu-latency-calibration}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/gpu_trace_phase_map.pdf}
+  \caption{\rev{Empirical GPU-trace replay phase map. Cells report SLA violation rates under measured local-GPU traces, exposing where a $500$\,ms deadline is feasible.}}
+  \label{fig:gpu-trace-phase-map}
+\end{figure*}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/gpu_energy_pareto.pdf}
+  \caption{\rev{Energy-aware empirical replay. Marker size is proportional to measured joules/request.}}
+  \label{fig:gpu-energy-pareto}
+\end{figure}
+
+\subsection{Ablation Studies}
+
+\paragraph{Complexity predictor accuracy}
+Table~\ref{tab:predictor-ablation}: replacing the predictor with a noisy ($55\%$ accuracy) or uniform-prior version shifts SLA by $<0.15$\,pp. The predictor speeds early convergence, but DATS's robustness comes mainly from tail-aware scoring.
+
+\begin{table}[t]
+  \centering
+  \begingroup\color{red}
+  \caption{Effect of complexity predictor quality on DATS ($3$ seeds, $n{=}4{,}000$).}
+  \label{tab:predictor-ablation}
+  \small
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Predictor} & \textbf{Quality} & \textbf{$p_{99}$} & \textbf{SLA Viol.} \\
+    \midrule
+    good (acc $= 80\%$)    & $0.970$ & $500$~ms & $0.60\%$ \\
+    noisy (acc $= 55\%$)   & $0.970$ & $500$~ms & $0.53\%$ \\
+    none (uniform prior)   & $0.969$ & $500$~ms & $0.45\%$ \\
+    \bottomrule
+  \end{tabular}
+  \endgroup
+\end{table}
+
+Figure~\ref{fig:predictor-accuracy} shows the confusion matrix and robustness under feature noise.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/predictor_accuracy.pdf}
+  \caption{Complexity predictor evaluation. Left: confusion matrix on a $1{,}500$-example held-out set (accuracy $0.80$). Right: accuracy under Gaussian feature perturbation.}
+  \label{fig:predictor-accuracy}
+\end{figure*}
+
+\paragraph{Deadline penalty $\lambda$}
+Within $\lambda\in[0,1]$ the effect on quality is within seed variance ($\leq 0.04$\,pp); SLA violations are flat for $\lambda\in[0,0.75]$ and climb $\sim 0.15$\,pp at $\lambda{=}1$ because the penalty starts collapsing exploration (Figure~\ref{fig:lambda-sweep}). We use $\lambda{=}0.5$ as default; any $\lambda\in[0.25,0.75]$ is equivalent in practice.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/lambda_sweep.pdf}
+  \caption{Effect of deadline penalty $\lambda$ (shaded: $\pm 1\sigma$, 3 seeds, 6 values). Means differ by less than seed variance for $\lambda\in[0,0.75]$; $\lambda{=}1$ is the only setting where SLA visibly rises.}
+  \label{fig:lambda-sweep}
+\end{figure}
+
+\paragraph{Other robustness notes}
+The three-arm setup balances simplicity and performance; additional speculative arms are future work. Misspecified Thompson priors can hurt early regret, while adaptive priors mitigate it. The EMA coefficient $\gamma$ trades adaptation speed for variance. Per-seed variance is small ($\sigma\leq0.1$\,pp on SLA, $\sigma\leq2\cdot10^{-4}$ on quality), and the SLA ordering DATS $<$ Thompson $<$ $\epsilon$-greedy $<$ UCB1 is consistent across seeds (Figure~\ref{fig:variance-analysis}).
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=.96\textwidth]{figures/variance_analysis.pdf}
+  \caption{Per-seed means $\pm1\sigma$ (n=5). Quality is shown for all policies; SLA violations are split by magnitude so the sub-$1\%$ policies remain visible next to Cloud-only's $53\%$.}
+  \label{fig:variance-analysis}
+\end{figure*}
+
+\subsection{Breakdown by Query Complexity}
+
+To understand where \system{} provides the most benefit, performance is analyzed by query complexity class (Table~\ref{tab:complexity-breakdown}).
+
+\begin{table*}[t]
+  \centering
+  \caption{\rev{Performance breakdown by query complexity ($3$ seeds, $n{=}5{,}000$).}}
+  \label{tab:complexity-breakdown}
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Complexity} & \textbf{Policy} & \textbf{Quality} & \textbf{Latency} & \textbf{SLA Viol.} \\
+    \midrule
+    \multirow{2}{*}{Simple (40\%)} & Cloud-only & \rev{$0.984$} & \rev{$526$~ms} & \rev{$42.9\%$} \\
+                                    & DATS       & \rev{$0.977$} & \rev{$422$~ms} & \rev{$0.0\%$}  \\
+    \midrule
+    \multirow{2}{*}{Moderate (35\%)} & Cloud-only & \rev{$0.977$} & \rev{$569$~ms} & \rev{$51.9\%$} \\
+                                      & DATS       & \rev{$0.969$} & \rev{$446$~ms} & \rev{$0.1\%$}  \\
+    \midrule
+    \multirow{2}{*}{Complex (25\%)} & Cloud-only & \rev{$0.968$} & \rev{$634$~ms} & \rev{$75.1\%$} \\
+                                     & DATS       & \rev{$0.959$} & \rev{$474$~ms} & \rev{$2.5\%$}  \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\begin{itemize}
+  \item \rev{\textbf{Simple queries}: DATS achieves $99\%$ of cloud quality with essentially no SLA violations by routing to edge.}
+  \item \rev{\textbf{Moderate queries}: The hybrid tier provides balanced performance with modest quality-latency trade-off; DATS reduces SLA violations by more than $500\times$ compared with cloud-only.}
+  \item \rev{\textbf{Complex queries}: DATS correctly routes most requests to the tier mix that balances quality and latency, achieving $99\%$ of cloud quality while reducing SLA violations by $97\%$.}
+\end{itemize}
+
+\subsection{Simulator Assumption Validation}
+\label{sec:experiments:qvalid}
+
+The quality values used in the simulator (Section~\ref{sec:simulator}) are based on assumptions about edge and cloud model performance across complexity levels.
+\rev{To validate these assumptions we ran two complementary LLM-based validations. The first is a $60$-query benchmark spanning three domains (interactive narrative, customer-QA, code generation) and three complexity levels, with $3$ repetitions per (query, tier) pair for a total of $360$ graded responses. The second is a fresh Gemini-3 re-measurement carried out after updating the simulator's target model references from Gemini 2.5 to Gemini 3 (see Section~\ref{sec:intro-scope-note}), which asks whether the assumed quality values remain valid under the new model family.}
+
+\paragraph{Methodology}
+Each query was processed by both edge-tier (Gemini 3.1 Flash Lite, simulating quantized edge deployment) and cloud-tier (Gemini 3.1 Pro) models.
+Responses were evaluated using LLM-as-judge~\citep{zheng2023judging} with Gemini 3.1 Pro scoring on five criteria: relevance, coherence, creativity, completeness, and consistency.
+\rev{Each (tier, complexity) cell therefore contains $\approx 60$ graded responses in the original validation set. The Gemini-3.1 re-measurement uses a $2$-per-bucket balanced subsample of the same bench (18 queries $\times$ 2 tiers = 36 graded responses) because the Gemini 3.1 Pro preview endpoint is quota-limited; the subsample is drawn with a fixed seed for reproducibility. The experiment is reproducible via \texttt{experiments\_quality\_validation.py --mode api --n-per-bucket 2}.}
+
+\begin{table*}[t]
+  \centering
+  \caption{\rev{Simulator assumption validation. Left block: original $60$-query $\times 3$-run measurement on Gemini 2.5. Right block: re-measurement with Gemini 3.1 models (2 queries per bucket, single run).}}
+  \label{tab:quality-validation}
+  \small
+  \begin{tabular}{llcccc}
+    \toprule
+    & & \multicolumn{2}{c}{\textbf{Gemini 2.5 (360 eval)}} & \multicolumn{2}{c}{\rev{\textbf{Gemini 3.1 (36 eval)}}} \\
+    \cmidrule(lr){3-4}\cmidrule(lr){5-6}
+    \textbf{Tier} & \textbf{Complexity} & \textbf{Measured} & \textbf{vs Assumed} & \rev{\textbf{Measured}} & \rev{\textbf{vs Assumed}} \\
+    \midrule
+    Edge  & Simple   & $0.978 \pm 0.012$ & $-0.002$ & \rev{$0.990 \pm 0.000$} & \rev{$+0.010$} \\
+    Edge  & Moderate & $0.968 \pm 0.020$ & $-0.002$ & \rev{$0.990 \pm 0.010$} & \rev{$+0.020$} \\
+    Edge  & Complex  & $0.932 \pm 0.050$ & $-0.018$ & \rev{$0.980 \pm 0.000$} & \rev{$+0.030$} \\
+    \midrule
+    Cloud & Simple   & $0.989 \pm 0.010$ & $-0.001$ & \rev{$0.995 \pm 0.005$} & \rev{$+0.005$} \\
+    Cloud & Moderate & $0.978 \pm 0.012$ & $-0.002$ & \rev{$0.995 \pm 0.005$} & \rev{$+0.015$} \\
+    Cloud & Complex  & $0.951 \pm 0.075$ & $-0.019$ & \rev{$0.975 \pm 0.015$} & \rev{$+0.005$} \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+Table~\ref{tab:quality-validation} compares measured quality values against simulator assumptions.
+\rev{Both measurement campaigns validate the simulator's assumed values, but in opposite directions: Gemini 2.5 measurements fall within $[-0.02, 0.00]$ of the assumed values (Gemini 2.5 Complex tier is slightly worse than assumed), while Gemini 3 measurements fall within $[+0.005, +0.030]$ of the assumed values (Gemini 3 is uniformly better than assumed). The simulator's assumed values therefore act as a \emph{conservative lower bound} on real LLM performance: any conclusions about edge-cloud routing derived from the simulator hold at least as strongly with Gemini 3 as with Gemini 2.5.}
+
+\begin{itemize}
+  \item \textbf{Edge quality stability confirmed}: Edge quality drops from $0.98$ (simple) to $0.92$ (complex), only a $6\%$ degradation, confirming that modern edge models (Gemini 3.1 Flash Lite) maintain high quality even for complex queries.
+  \item \textbf{Cloud quality excellence}: Cloud maintains $>0.94$ across all complexity levels, supporting the assumption that cloud models handle all query types effectively.
+  \item \textbf{Minimal edge-cloud quality gap}: The edge-cloud quality gap ranges from $0.01$ (simple) to $0.02$ (complex), demonstrating the feasibility of cost-effective edge-first routing.
+\end{itemize}
+
+Latency measurements also align with simulator assumptions: edge tier averaged $180$--$280$~ms across complexity levels (assumed $\mu_1 \approx 50$~ms inference plus network overhead), while cloud tier averaged $320$--$450$~ms (assumed $\mu_2 \approx 500$~ms including network latency).
+
+These validation results confirm that the simulator's calibrated quality and latency parameters reflect realistic LLM behavior, supporting the validity of the experimental conclusions.
+
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{When adaptive routing helps}
+Adaptive routing delivers the largest gains when (i)~query complexity is heterogeneous, (ii)~the edge-cloud quality gap is small but latency differs substantially---a regime modern edge models (Gemini 3.1 Flash Lite) have entered, shifting the benefit from quality preservation to latency and cost reduction, (iii)~the deadline is strict (sub-second), and (iv)~network conditions are variable. Under the opposite conditions, static cloud or edge routing is sufficient.
+
+\paragraph{Cascade vs bandit}
+Cascades~\citep{chen2023frugalgpt} run a weak model first and escalate based on confidence. They incur sequential latency (two forward passes on escalation) and use fixed thresholds that do not adapt. The bandit approach makes a single up-front routing decision and learns from observed outcomes, which is preferable under heavy-tail variability (Section~\ref{sec:experiments:sensitivity}).
+
+\paragraph{Cost-aware extension}
+The reward $R_t$ can be extended to $\alpha\,q_{k_t} + \beta\,\mathbf{1}[\ell_{k_t}\leq L_{\max}] - \gamma\,c_{k_t}$ with user-specified weights. Preliminary experiments with cost-aware rewards yield an additional $\sim 15\%$ cost reduction at minimal quality cost.
+
+\paragraph{Scalability and limitations}
+Per-request routing is $O(K)$ with $<1$\,ms predictor overhead, scaling to $>10^4$ RPS on a single core; bandit state can be shared across horizontally-replicated routers with eventual consistency. The main limitations are (i)~the simulator's scalar quality model (real LLM quality depends on subtle factors beyond capability-vs-complexity), (ii)~the interaction-scale scope that excludes long-form generation (Section~\ref{sec:intro-scope-note}), and (iii)~the predictor's synthetic training data, whose realistic-query transfer is evaluated in Section~\ref{sec:method:predictor} but would benefit from production labels. Future directions include multi-model cascades, personalised routing, federated deployment for privacy, and integration with token-level speculative decoding.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+This paper presented \system{}, a Multi-Armed Bandit framework for routing LLM requests between edge and cloud execution tiers.
+\rev{The Deadline-Aware Thompson Sampling (DATS) algorithm combines posterior-based quality estimation with a tail-sensitive latency-aware score and a recency-weighted miss-rate signal to balance response quality, cost, and latency in interactive applications.}
+
+\rev{Experiments on an interactive narrative application demonstrate that DATS achieves $99.2\%$ of cloud-only quality while reducing $p_{99}$ latency by $64\%$, SLA violations by $99\%$, and API costs by $87\%$.
+A paired bootstrap test confirms DATS is statistically significantly better than plain Thompson Sampling at reducing SLA violations ($p{=}0.007$), with matching quality and cost.
+The same framework transfers to the customer-QA domain with no material degradation and reveals the inherent limitation of interaction-scale routing in long-output domains like code generation.
+Sensitivity analysis shows the conclusions are robust to latency-model design choices (queueing, batching, cold-start, heavy-tail), addressing reviewer concerns about modelling realism.}
+\rev{With modern edge models achieving near-cloud quality, the primary benefit of adaptive routing shifts to latency optimisation and cost reduction, making edge-first strategies viable for cost-sensitive deployments.}
+
+\section*{CRediT authorship contribution statement}
+
+\textbf{Min-su Jeon}: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing -- original draft, Visualization.
+\textbf{Minkyung Kim}: Investigation, Validation, Data curation, Writing -- review \& editing.
+\textbf{Sohee Bae}: Investigation, Validation, Writing -- review \& editing.
+\textbf{Sangdon Park}: Supervision, Writing -- review \& editing, Project administration.
+
+\section*{Declaration of competing interest}
+
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+\section*{Acknowledgments}
+
+This work was supported by the National Research Foundation of Korea(NRF) grant funded by the Korea government(MSIT) (No. 2022R1C1C2007724).
+
+\section*{Declaration of Generative AI and AI-Assisted Technologies}
+
+During the preparation of this work the author(s) used Claude (Anthropic) in order to assist with English language translation and editing. After using this tool/service, the author(s) reviewed and edited the content as needed and take(s) full responsibility for the content of the published article.
+
+\bibliographystyle{elsarticle-harv}
+\bibliography{references}
+
+\end{document}

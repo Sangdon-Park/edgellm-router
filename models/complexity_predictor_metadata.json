@@ -1,0 +1,64 @@
+{
+  "model": "ComplexityPredictor two-layer MLP",
+  "features": [
+    "input_length",
+    "output_length",
+    "entity_density",
+    "question_type",
+    "context_utilization",
+    "turn_index"
+  ],
+  "hidden_units": 16,
+  "seed": 11,
+  "train_samples": 6000,
+  "validation_samples": 1500,
+  "label_noise": 0.05,
+  "epochs": 60,
+  "learning_rate": 0.05,
+  "batch_size": 64,
+  "l2": 0.0001,
+  "train_metrics": {
+    "train_acc": 0.7698333333333334,
+    "n": 6000
+  },
+  "validation_metrics": {
+    "accuracy": 0.7986666666666666,
+    "confusion_matrix": [
+      [
+        547,
+        88,
+        0
+      ],
+      [
+        114,
+        324,
+        46
+      ],
+      [
+        0,
+        54,
+        327
+      ]
+    ],
+    "per_class": [
+      {
+        "class": 0,
+        "support": 635,
+        "recall": 0.8614173228346457,
+        "precision": 0.8275340393343419
+      },
+      {
+        "class": 1,
+        "support": 484,
+        "recall": 0.6694214876033058,
+        "precision": 0.6952789699570815
+      },
+      {
+        "class": 2,
+        "support": 381,
+        "recall": 0.8582677165354331,
+        "precision": 0.8766756032171582
+      }
+    ]
+  }
+}
