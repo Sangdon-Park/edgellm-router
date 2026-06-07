@@ -163,7 +163,7 @@ Section~\ref{sec:conclusion} concludes.
 This work intersects edge LLM inference, adaptive model serving, and online learning for routing.
 
 \paragraph{Edge LLM inference}
-Quantization (GPTQ~\citep{frantar2022gptq}, AWQ~\citep{lin2024awq}) and distillation (\citep{hinton2015distilling,sanh2019distilbert,ho2023large,hsieh2023distilling}) reduce model footprint, while runtimes like MLC-LLM~\citep{mlc2023} and llama.cpp enable deployment on consumer hardware. These techniques preserve $>90\%$ of original quality on simple tasks but degrade on complex reasoning; modern edge-optimised models (Gemini 3.1 Flash Lite) have narrowed the gap but not closed it. The observed complexity-dependent gap motivates adaptive routing instead of uniform edge deployment.
+Quantization (GPTQ~\citep{frantar2022gptq}, AWQ~\citep{lin2024awq}) and distillation (\citep{hinton2015distilling,sanh2019distilbert,ho2023large,hsieh2023distilling}) reduce model footprint, while runtimes like MLC-LLM~\citep{mlc2023} and llama.cpp enable deployment on consumer hardware. These techniques preserve $>90\%$ of original quality on simple tasks but degrade on complex reasoning; modern edge-optimised models (Gemini 3.1 Flash Lite~\citep{googledeepmind2026gemini31flashlite}) have narrowed the gap but not closed it. The observed complexity-dependent gap motivates adaptive routing instead of uniform edge deployment.
 
 \paragraph{Adaptive model serving}
 Clipper~\citep{crankshaw2017clipper}, InferLine~\citep{crankshaw2020inferline}, and SHEPHERD~\citep{zhang2023shepherd} route requests across heterogeneous backends using batching and learned cost models. LLM-specific systems include Orca's continuous batching~\citep{yu2022orca}, vLLM's PagedAttention~\citep{kwon2023vllm}, and FlexGen~\citep{sheng2023flexgen}. These optimise \emph{single-model} serving and are complementary to the \emph{multi-tier routing} problem addressed here. Cascade approaches (FrugalGPT~\citep{chen2023frugalgpt}, RouteLLM~\citep{ong2024routellm}, mixture-of-thought~\citep{yue2023large}, AutoMix~\citep{aggarwal2024automix}) route via fixed confidence thresholds or supervised classifiers; we formulate routing as online learning that adapts without ground-truth labels, and include FrugalGPT as a baseline (Section~\ref{sec:experiments}).
@@ -639,7 +639,7 @@ A paired bootstrap test ($20{,}000$ resamples) over the $5$ seeds of Table~\ref{
 \subsection{\rev{End-to-End Deployment Validation}}
 \label{sec:experiments:real-api}
 
-\rev{We also ran both policies against live Gemini endpoints, using \texttt{gemini-3.1-flash-lite} as the edge proxy and \texttt{gemini-3.1-pro-preview} as cloud/judge. Under clean-API conditions ($L_{\max}{=}1500$\,ms, $n{=}9$), DATS reproduced its simulator advantage: $33\%$ SLA violations and $888$\,ms $p_{50}$ versus Thompson's $44\%$ and $1040$\,ms. Under API overload (raw cloud calls $10$--$34$\,s), DATS still kept $p_{50}$ latency $45\%$ below Thompson's. Full logs are in \texttt{results/real\_api\_routing.json}; Sections \ref{sec:experiments:sensitivity} remain the primary controlled evidence because they isolate routing effects from API noise.}
+\rev{We also ran both policies against live Gemini endpoints, using \texttt{gemini-3.1-flash-lite}~\citep{googledeepmind2026gemini31flashlite} as the edge proxy and \texttt{gemini-3.1-pro-preview}~\citep{googledeepmind2026gemini31pro} as cloud/judge. Under clean-API conditions ($L_{\max}{=}1500$\,ms, $n{=}9$), DATS reproduced its simulator advantage: $33\%$ SLA violations and $888$\,ms $p_{50}$ versus Thompson's $44\%$ and $1040$\,ms. Under API overload (raw cloud calls $10$--$34$\,s), DATS still kept $p_{50}$ latency $45\%$ below Thompson's. Full logs are in \texttt{results/real\_api\_routing.json}; Sections \ref{sec:experiments:sensitivity} remain the primary controlled evidence because they isolate routing effects from API noise.}
 
 \subsection{\rev{GPU-Calibrated Empirical Replay}}
 \label{sec:experiments:gpu-replay}
@@ -760,7 +760,7 @@ The quality values used in the simulator (Section~\ref{sec:simulator}) are based
 \rev{To validate these assumptions we ran two complementary LLM-based validations. The first is a $60$-query benchmark spanning three domains (interactive narrative, customer-QA, code generation) and three complexity levels, with $3$ repetitions per (query, tier) pair for a total of $360$ graded responses. The second is a fresh Gemini-3 re-measurement carried out after updating the simulator's target model references from Gemini 2.5 to Gemini 3 (see Section~\ref{sec:intro-scope-note}), which asks whether the assumed quality values remain valid under the new model family.}
 
 \paragraph{Methodology}
-Each query was processed by both edge-tier (Gemini 3.1 Flash Lite, simulating quantized edge deployment) and cloud-tier (Gemini 3.1 Pro) models.
+Each query was processed by both edge-tier (Gemini 3.1 Flash Lite~\citep{googledeepmind2026gemini31flashlite}, simulating quantized edge deployment) and cloud-tier (Gemini 3.1 Pro~\citep{googledeepmind2026gemini31pro}) models.
 Responses were evaluated using LLM-as-judge~\citep{zheng2023judging} with Gemini 3.1 Pro scoring on five criteria: relevance, coherence, creativity, completeness, and consistency.
 \rev{Each (tier, complexity) cell therefore contains $\approx 60$ graded responses in the original validation set. The Gemini-3.1 re-measurement uses a $2$-per-bucket balanced subsample of the same bench (18 queries $\times$ 2 tiers = 36 graded responses) because the Gemini 3.1 Pro preview endpoint is quota-limited; the subsample is drawn with a fixed seed for reproducibility. The experiment is reproducible via \texttt{experiments\_quality\_validation.py --mode api --n-per-bucket 2}.}
 
@@ -845,7 +845,10 @@ This work was supported by the National Research Foundation of Korea(NRF) grant 
 
 During the preparation of this work the author(s) used Claude (Anthropic) in order to assist with English language translation and editing. After using this tool/service, the author(s) reviewed and edited the content as needed and take(s) full responsibility for the content of the published article.
 
+\begingroup
+\setlength{\bibsep}{0pt}
 \bibliographystyle{elsarticle-harv}
 \bibliography{references}
+\endgroup
 
 \end{document}
